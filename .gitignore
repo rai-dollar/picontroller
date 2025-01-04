@@ -5,6 +5,12 @@
 # Python
 .env
 .venv
+venv
 .pytest_cache
 .python-version
 __pycache__
+
+
+*.csv.gz
+*.csv
+.ipynb_checkpoints/
