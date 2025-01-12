@@ -558,9 +558,8 @@ def _get_new_error_integral(error: int256) -> (int256, int256):
     elapsed: uint256 = 0 if (self.last_update_time == 0) else block.timestamp - self.last_update_time
     
     new_time_adjusted_error: int256 = self._riemann_sum(error, self.last_error) * convert(elapsed, int256)
-    #accumulatedLeak: uint256 = RAY if self.per_second_integral_leak == convert(1E27, uint256) else pow_mod256(self.per_second_integral_leak, elapsed)//RAY
 
-    #accumulatedLeak: uint256 = RAY if self.per_second_integral_leak == convert(1E27, uint256) else self.my_exp_uint256(self.per_second_integral_leak, elapsed, RAY)
+    #accumulated_leak: uint256 = RAY if self.per_second_integral_leak == convert(1E27, uint256) else self.my_exp_uint256(self.per_second_integral_leak, elapsed, RAY)
 
     accumulated_leak: uint256 = RAY
     leaked_error_integral: int256 = (convert(accumulated_leak, int256) * self.error_integral) // convert(TWENTY_SEVEN_DECIMAL_NUMBER, int256)

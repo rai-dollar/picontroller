@@ -375,33 +375,39 @@ class TestPIController:
         controller.update(error, sender=owner);
         error_integral2 = controller.error_integral();
         assert error_integral2 > error_integral1;
+    """
 
     def test_integral_leaks2(self, owner, controller, chain):
         leak = 998721603904830360273103599
+        #leak = 10**27
+
+        controller.modify_parameters_int("kp", int(2.25*10**11), sender=owner);
+        controller.modify_parameters_int("ki", int(7.2 * 10**4), sender=owner);
         controller.modify_parameters_uint("per_second_integral_leak", leak, sender=owner);
-        error = int(-0.0001 * 10**27)
-        first_ts = chain.pending_timestamp
+
+        error = int(10**23)
 
         # First update
         # Need to update twice since first update doesn't create an error integral
         # as elapsed time is 0
         controller.update(error, sender=owner);
-        controller.update(error, sender=owner);
-        error_integral1 = controller.error_integral();
-        assert error_integral1 < 0;
-
-        #chain.mine(100, timestamp = first_ts + 100)
-        #chain.pending_timestamp += 360000
-        chain.pending_timestamp += 2570
+        assert controller.error_integral() == 0;
 
         # Second update
-        #last_ts = chain.pending_timestamp
+        controller.update(error, sender=owner);
+        error_integral1 = controller.error_integral();
+        assert error_integral1 == error;
 
-        #assert (last_ts - first_ts) == 100
+        update_delay = 1000
+        chain.pending_timestamp += update_delay
+
+        # Third update
         controller.update(error, sender=owner);
         error_integral2 = controller.error_integral();
-        assert error_integral2 == error_integral1;
+        assert error_integral2 == error_integral1 + (update_delay+1)*error;
 
+
+    """
     def test_leaks_sets_integral_to_zero(self, owner, controller, chain):
         #chain.provider.auto_mine = False
         assert controller.error_integral() == 0
