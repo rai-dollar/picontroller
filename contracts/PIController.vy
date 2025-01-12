@@ -3,26 +3,25 @@
 authorities: public(HashMap[address, uint256])
 
 
-controlVariable: public(bytes32)
+control_variable: public(bytes32)
 kp: public(int256)
 ki: public(int256)
-coBias: public(int256)
-outputUpperBound: public(int256)
-outputLowerBound: public(int256)
-errorIntegral: public(int256)
-lastError: public(int256)
-perSecondIntegralLeak: public(uint256)
-lastOutput: public(int256)
-lastPOutput: public(int256)
-lastIOutput: public(int256)
-lastUpdateTime: public(uint256)
+co_bias: public(int256)
+output_upper_bound: public(int256)
+output_lower_bound: public(int256)
+error_integral: public(int256)
+last_error: public(int256)
+per_second_integral_leak: public(uint256)
+last_output: public(int256)
+last_p_output: public(int256)
+last_i_output: public(int256)
+last_update_time: public(uint256)
 
-seedProposer: public(address)
+updater: public(address)
 
 TWENTY_SEVEN_DECIMAL_NUMBER: constant(uint256) = 10 ** 27
 EIGHTEEN_DECIMAL_NUMBER: constant(int256) = 10**18
 RAY: public(constant(uint256)) = 10 ** 27
-
 
 @external
 @view
@@ -462,193 +461,182 @@ def exp_uint256(a: uint256, b: uint256) -> uint256:
 
     return x * y  # dev: SafeMath Check
 @deploy
-def __init__(_controlVariable: bytes32, _kp: int256, _ki: int256, _coBias: int256, _perSecondIntegralLeak: uint256, _outputUpperBound: int256, _outputLowerBound: int256, importedState: int256[3]):
+def __init__(_control_variable: bytes32, _kp: int256, _ki: int256, _co_bias: int256,
+_per_second_integral_leak: uint256, _output_upper_bound: int256,
+_output_lower_bound: int256, imported_state: int256[3]):
     #
-    assert _outputUpperBound >= _outputLowerBound, "PIController/invalid-bounds"
-    assert convert(importedState[0], uint256) <= block.timestamp, "PIController/invalid-imported-time"
+    assert _output_upper_bound >= _output_lower_bound, "PIController/invalid-bounds"
+    assert convert(imported_state[0], uint256) <= block.timestamp, "PIController/invalid-imported-time"
     self.authorities[msg.sender] = 1
-    self.controlVariable = _controlVariable
+    self.control_variable = _control_variable
     self.kp = _kp
     self.ki = _ki
-    self.coBias = _coBias
-    self.perSecondIntegralLeak = _perSecondIntegralLeak
-    self.outputUpperBound = _outputUpperBound
-    self.outputLowerBound = _outputLowerBound
-    self.lastUpdateTime = convert(importedState[0], uint256)
-    self.lastError = importedState[1]
-    self.errorIntegral = importedState[2]
+    self.co_bias = _co_bias
+    self.per_second_integral_leak = _per_second_integral_leak
+    self.output_upper_bound = _output_upper_bound
+    self.output_lower_bound = _output_lower_bound
+    self.last_update_time = convert(imported_state[0], uint256)
+    self.last_error = imported_state[1]
+    self.error_integral = imported_state[2]
 
 @external
-def addAuthority(account: address):
+def add_authority(account: address):
     self.authorities[account] = 1
     
 @external
-def removeAuthority(account: address):
+def remove_authority(account: address):
     self.authorities[account] = 0
 
 @external
-def modifyParametersAddr(parameter: String[32], addr: address):
-    #if (convert(parameter, String[32]) == "seedProposer"):
-    if (parameter == "seedProposer"):
-        self.seedProposer = addr
+def modify_parameters_addr(parameter: String[32], addr: address):
+    if (parameter == "updater"):
+        self.updater = addr
     else:
         raise "PIController/modify-unrecognized-param"
 
 @external
-def modifyParametersUint(parameter: String[32], val: uint256):
-    if (parameter == "perSecondIntegralLeak"):
-        assert val <= TWENTY_SEVEN_DECIMAL_NUMBER, "PIController/invalid-perSecondIntegralLeak"
-        self.perSecondIntegralLeak = val
+def modify_parameters_uint(parameter: String[32], val: uint256):
+    if (parameter == "per_second_integral_leak"):
+        assert val <= TWENTY_SEVEN_DECIMAL_NUMBER, "PIController/invalid-per_second_integral_leak"
+        self.per_second_integral_leak = val
     else:
         raise "PIController/modify-unrecognized-param"
 
 @external
-def modifyParametersInt(parameter: String[32], val: int256):
-    if (parameter == "outputUpperBound"):
-        assert val > self.outputLowerBound, "PIController/invalid-outputUpperBound"
-        self.outputUpperBound = val
-    elif (parameter == "outputLowerBound"):
-        assert val < self.outputUpperBound, "PIController/invalid-outputLowerBound"
-        self.outputLowerBound = val
+def modify_parameters_int(parameter: String[32], val: int256):
+    if (parameter == "output_upper_bound"):
+        assert val > self.output_lower_bound, "PIController/invalid-output_upper_bound"
+        self.output_upper_bound = val
+    elif (parameter == "output_lower_bound"):
+        assert val < self.output_upper_bound, "PIController/invalid-output_lower_bound"
+        self.output_lower_bound = val
     elif (parameter == "kp"):
         self.kp = val
     elif (parameter == "ki"):
         self.ki = val
-    elif (parameter == "coBias"):
-        self.coBias = val
-    elif (parameter == "errorIntegral"):
-        self.errorIntegral = val
+    elif (parameter == "co_bias"):
+        self.co_bias = val
+    elif (parameter == "error_integral"):
+        self.error_integral = val
     else:
         raise "PIController/modify-unrecognized-param"
 
 @internal
 @view
-def riemannSum(x: int256, y: int256)-> int256:
-    #print(x, y, (x + y) // 2)
+def _riemann_sum(x: int256, y: int256)-> int256:
     return (x + y) // 2
 
 @internal
 @view
-def boundPiOutput(piOutput: int256) -> int256:
-    boundedPiOutput: int256 = piOutput
-    if piOutput < self.outputLowerBound:
-        boundedPiOutput = self.outputLowerBound
-    elif piOutput > self.outputUpperBound:
-        boundedPiOutput = self.outputUpperBound
+def _bound_pi_output(pi_output: int256) -> int256:
+    bounded_pi_output: int256 = pi_output
+    if pi_output < self.output_lower_bound:
+        bounded_pi_output = self.output_lower_bound
+    elif pi_output > self.output_upper_bound:
+        bounded_pi_output = self.output_upper_bound
 
-    return boundedPiOutput
-
-
-@internal
-@view
-def clampErrorIntegral(boundedPiOutput:int256, newErrorIntegral: int256, newArea: int256) -> int256:
-    clampedErrorIntegral: int256 = newErrorIntegral
-    if (boundedPiOutput == self.outputLowerBound and newArea < 0 and self.errorIntegral < 0):
-        clampedErrorIntegral = clampedErrorIntegral - newArea
-    elif (boundedPiOutput == self.outputUpperBound and newArea > 0 and self.errorIntegral > 0):
-        clampedErrorIntegral = clampedErrorIntegral - newArea
-    return clampedErrorIntegral
-
-@internal
-#@external
-@view
-def getNextErrorIntegral(error: int256) -> (int256, int256):
-    elapsed: uint256 = 0 if (self.lastUpdateTime == 0) else block.timestamp - self.lastUpdateTime
-    
-    newTimeAdjustedError: int256 = self.riemannSum(error, self.lastError) * convert(elapsed, int256)
-    #uint256 accumulatedLeak = (perSecondIntegralLeak == 1E27) ? RAY : rpower(perSecondIntegralLeak, elapsed, RAY);
-    #accumulatedLeak: uint256 = RAY if self.perSecondIntegralLeak == convert(1E27, uint256) else (self.perSecondIntegralLeak//RAY) ** elapsed
-    #accumulatedLeak: uint256 = RAY if self.perSecondIntegralLeak == convert(1E27, uint256) else pow_mod256(self.perSecondIntegralLeak, elapsed)//RAY
-
-    accumulatedLeak: uint256 = RAY if self.perSecondIntegralLeak == convert(1E27, uint256) else self.my_exp_uint256(self.perSecondIntegralLeak, elapsed, RAY)
-
-    #accumulatedLeak: uint256 = RAY
-    leakedErrorIntegral: int256 = (convert(accumulatedLeak, int256) * self.errorIntegral) // convert(TWENTY_SEVEN_DECIMAL_NUMBER, int256)
-    
-    return (leakedErrorIntegral + newTimeAdjustedError, newTimeAdjustedError)
+    return bounded_pi_output
 
 @external
 @view
-def getNextIntegral(error: int256) -> (int256, int256):
-    elapsed: uint256 = 0 if (self.lastUpdateTime == 0) else block.timestamp - self.lastUpdateTime
-    newTimeAdjustedError: int256 = self.riemannSum(error, self.lastError) * convert(elapsed, int256)
-    #uint256 accumulatedLeak = (perSecondIntegralLeak == 1E27) ? RAY : rpower(perSecondIntegralLeak, elapsed, RAY);
-    #accumulatedLeak: uint256 = RAY if self.perSecondIntegralLeak == convert(1E27, uint256) else (self.perSecondIntegralLeak//RAY) ** elapsed
-    #accumulatedLeak: uint256 = RAY if self.perSecondIntegralLeak == convert(1E27, uint256) else pow_mod256(self.perSecondIntegralLeak//RAY, elapsed)
-
-    accumulatedLeak: uint256 = RAY
-    leakedErrorIntegral: int256 = (convert(accumulatedLeak, int256) * self.errorIntegral) // convert(TWENTY_SEVEN_DECIMAL_NUMBER, int256)
-    return (leakedErrorIntegral + newTimeAdjustedError, newTimeAdjustedError)
+def bound_pi_output(pi_output: int256) -> int256:
+    return self._bound_pi_output(pi_output)
 
 @internal
 @view
-def getRawPiOutput(error: int256, errorI: int256) -> (int256, int256, int256):
-    # // output = P + I = Kp * error + Ki * errorI
-    pOutput: int256 = (error * self.kp) // EIGHTEEN_DECIMAL_NUMBER
-    iOutput: int256 = (errorI * self.ki) // EIGHTEEN_DECIMAL_NUMBER
+def clamp_error_integral(bounded_pi_output:int256, new_error_integral: int256, new_area: int256) -> int256:
+    clamped_error_integral: int256 = new_error_integral
+    if (bounded_pi_output == self.output_lower_bound and new_area < 0 and self.error_integral < 0):
+        clamped_error_integral = clamped_error_integral - new_area
+    elif (bounded_pi_output == self.output_upper_bound and new_area > 0 and self.error_integral > 0):
+        clamped_error_integral = clamped_error_integral - new_area
+    return clamped_error_integral
 
-    return (self.coBias + pOutput + iOutput, pOutput, iOutput)
+@internal
+@view
+def _get_new_error_integral(error: int256) -> (int256, int256):
+    elapsed: uint256 = 0 if (self.last_update_time == 0) else block.timestamp - self.last_update_time
+    
+    new_time_adjusted_error: int256 = self._riemann_sum(error, self.last_error) * convert(elapsed, int256)
+    #accumulatedLeak: uint256 = RAY if self.per_second_integral_leak == convert(1E27, uint256) else pow_mod256(self.per_second_integral_leak, elapsed)//RAY
+
+    #accumulatedLeak: uint256 = RAY if self.per_second_integral_leak == convert(1E27, uint256) else self.my_exp_uint256(self.per_second_integral_leak, elapsed, RAY)
+
+    accumulated_leak: uint256 = RAY
+    leaked_error_integral: int256 = (convert(accumulated_leak, int256) * self.error_integral) // convert(TWENTY_SEVEN_DECIMAL_NUMBER, int256)
+    
+    return (leaked_error_integral + new_time_adjusted_error, new_time_adjusted_error)
 
 @external
 @view
-def getRawPiOutputExternal(error: int256, errorI: int256) -> (int256, int256, int256):
+def get_new_error_integral(error: int256) -> (int256, int256):
+    return self._get_new_error_integral(error)
+
+@internal
+@view
+def _get_raw_pi_output(error: int256, errorI: int256) -> (int256, int256, int256):
     # // output = P + I = Kp * error + Ki * errorI
-    pOutput: int256 = (error * self.kp) // EIGHTEEN_DECIMAL_NUMBER
-    iOutput: int256 = (errorI * self.ki) // EIGHTEEN_DECIMAL_NUMBER
+    p_output: int256 = (error * self.kp) // EIGHTEEN_DECIMAL_NUMBER
+    i_output: int256 = (errorI * self.ki) // EIGHTEEN_DECIMAL_NUMBER
 
-    return (self.coBias + pOutput + iOutput, pOutput, iOutput)
+    return (self.co_bias + p_output + i_output, p_output, i_output)
 
+@external
+@view
+def get_raw_pi_output(error: int256, errorI: int256) -> (int256, int256, int256):
+    return self._get_raw_pi_output(error, errorI)
+    
 @external
 def update(error: int256) -> (int256, int256, int256):
-    assert self.seedProposer == msg.sender, "PIController/invalid-msg-sender"
+    assert self.updater == msg.sender, "PIController/invalid-msg-sender"
 
-    assert block.timestamp > self.lastUpdateTime, "PIController/wait-longer"
+    assert block.timestamp > self.last_update_time, "PIController/wait-longer"
 
-    newErrorIntegral: int256 = 0
-    newArea: int256 = 0
-    (newErrorIntegral, newArea) = self.getNextErrorIntegral(error)
+    new_error_integral: int256 = 0
+    new_area: int256 = 0
+    (new_error_integral, new_area) = self._get_new_error_integral(error)
 
-    piOutput: int256 = 0
-    pOutput: int256 = 0
-    iOutput: int256 = 0
-    (piOutput, pOutput, iOutput) = self.getRawPiOutput(error, newErrorIntegral)
+    pi_output: int256 = 0
+    p_output: int256 = 0
+    i_output: int256 = 0
+    (pi_output, p_output, i_output) = self._get_raw_pi_output(error, new_error_integral)
 
-    boundedPiOutput: int256 = self.boundPiOutput(piOutput)
+    bounded_pi_output: int256 = self._bound_pi_output(pi_output)
 
-    self.errorIntegral = self.clampErrorIntegral(boundedPiOutput, newErrorIntegral, newArea)
+    self.error_integral = self.clamp_error_integral(bounded_pi_output, new_error_integral, new_area)
 
-    self.lastUpdateTime = block.timestamp
-    self.lastError = error
+    self.last_update_time = block.timestamp
+    self.last_error = error
 
-    self.lastOutput = boundedPiOutput
-    self.lastPOutput = pOutput
-    self.lastIOutput = iOutput
+    self.last_output = bounded_pi_output
+    self.last_p_output = p_output
+    self.last_i_output = i_output
 
-    return (boundedPiOutput, pOutput, iOutput)
-
-@external
-@view
-def lastUpdate() -> (uint256, int256, int256, int256):
-    return (self.lastUpdateTime, self.lastOutput, self.lastPOutput, self.lastIOutput)
+    return (bounded_pi_output, p_output, i_output)
 
 @external
 @view
-def getNextPiOutput(error: int256) -> (int256, int256, int256):
-    newErrorIntegral: int256 = 0
+def last_update() -> (uint256, int256, int256, int256):
+    return (self.last_update_time, self.last_output, self.last_p_output, self.last_i_output)
+
+@external
+@view
+def get_new_pi_output(error: int256) -> (int256, int256, int256):
+    new_error_integral: int256 = 0
     tmp: int256 = 0
-    (newErrorIntegral, tmp) = self.getNextErrorIntegral(error)
+    (new_error_integral, tmp) = self._get_new_error_integral(error)
 
-    piOutput: int256 = 0
-    pOutput: int256 = 0
-    iOutput: int256 = 0
-    (piOutput, pOutput, iOutput) = self.getRawPiOutput(error, newErrorIntegral)
+    pi_output: int256 = 0
+    p_output: int256 = 0
+    i_output: int256 = 0
+    (pi_output, p_output, i_output) = self._get_raw_pi_output(error, new_error_integral)
 
-    boundedPiOutput: int256 = self.boundPiOutput(piOutput)
+    bounded_pi_output: int256 = self._bound_pi_output(pi_output)
 
-    return (boundedPiOutput, pOutput, iOutput)
+    return (bounded_pi_output, p_output, i_output)
 
 @external
 @view
 def elapsed() -> uint256:
-    return 0 if self.lastUpdateTime == 0 else block.timestamp - self.lastUpdateTime
+    return 0 if self.last_update_time == 0 else block.timestamp - self.last_update_time
 

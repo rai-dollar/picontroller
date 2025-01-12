@@ -10,7 +10,7 @@ venv
 .python-version
 __pycache__
 
-
+*.swp
 *.csv.gz
 *.csv
 .ipynb_checkpoints/
