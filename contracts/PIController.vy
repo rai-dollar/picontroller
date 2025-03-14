@@ -1,7 +1,9 @@
-#pragma version >0.3.10
+#pragma version ~=0.4.0
 
-authorities: public(HashMap[address, uint256])
 
+from interfaces import IOracle
+
+authorities: public(HashMap[address, bool])
 
 control_variable: public(bytes32)
 kp: public(int256)
@@ -9,9 +11,18 @@ ki: public(int256)
 co_bias: public(int256)
 output_upper_bound: public(int256)
 output_lower_bound: public(int256)
+target_time_since: public(uint256)
+min_reward: public(uint256)
+max_reward: public(uint256)
+min_ts: public(uint256)
+max_ts: public(uint256)
+min_deviation: public(uint256)
+max_deviation: public(uint256)
+window_size: public(uint256)
+oracle: public(IOracle)
+
 error_integral: public(int256)
 last_error: public(int256)
-per_second_integral_leak: public(uint256)
 last_output: public(int256)
 last_p_output: public(int256)
 last_i_output: public(int256)
@@ -19,491 +30,93 @@ last_update_time: public(uint256)
 
 updater: public(address)
 
-TWENTY_SEVEN_DECIMAL_NUMBER: constant(uint256) = 10 ** 27
+rewards: public(HashMap[address, uint256])
+scales: public(HashMap[uint256, uint256])
+
 EIGHTEEN_DECIMAL_NUMBER: constant(int256) = 10**18
-RAY: public(constant(uint256)) = 10 ** 27
-
-@external
-@view
-def my_exp_uint256_external(x: uint256, n: uint256, b: uint256) -> uint256:  
-    y: uint256 = n
-    w: uint256 = x
-    z: uint256 = 0
-    
-    if x == 0:
-        if n == 0:
-            z = b
-            
-    if n % 2 == 0:
-        z = b
-    else:
-        z = x
-    half: uint256 = b//2
-    zx: uint256 = 0
-    xxRound: uint256 = 0
-    zxRound: uint256 = 0
-    xx: uint256 = 0
-
-    #1
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #2
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #3
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #4
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #5
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #6
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #7
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #8
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-        
-    return z    
-#
-@internal
-@view
-def my_exp_uint256(x: uint256, n: uint256, b: uint256) -> uint256:  
-    y: uint256 = n
-    w: uint256 = x
-    z: uint256 = 0
-    
-    if x == 0:
-        if n == 0:
-            z = b
-            
-    if n % 2 == 0:
-        z = b
-    else:
-        z = x
-    half: uint256 = b//2
-    zx: uint256 = 0
-    xxRound: uint256 = 0
-    zxRound: uint256 = 0
-    xx: uint256 = 0
-
-    #1
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #2
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #3
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #4
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #5
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #6
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #7
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-    #8
-    y = y//2
-    xx = w * w
-    if xx//w != w:
-        raise "0,0"
-    xxRound = xx + half
-    if xxRound < xx:
-        raise "0,0"
-    w = xxRound//b
-    if y % 2 > 0:
-        zx = z * w
-        if (w != 0 and (z*w)//w != z):
-            raise "0,0"
-        zxRound = zx + half
-        if zxRound < zx:
-            raise "0,0"
-        z = zxRound //b
-        
-    return z                  
 
 
-@internal
-@view
-def exp_uint256(a: uint256, b: uint256) -> uint256:
-    #if a < 2 or b < 2:
-    #    # Default to EVM in these special cases
-    #    return a ** b  # dev: Vyper Would Revert
+# State Variables
+#oracle_values: uint256[N]  # Circular buffer to hold last N values
+oracle_values: HashMap[uint256, uint256]  # Circular buffer simulated via mapping
+index: uint256  # Pointer to next insert position (0 to N-1)
+count: uint256  # Number of elements inserted so far, up to N
+rolling_sum: uint256  # Sum of last N values for efficient averaging
 
-    x: uint256 = a
-    n: uint256 = b
-    y: uint256 = 1
 
-    # NOTE: Do this at most 8 times... e.g. log_2(256)
+#min_reward = 1e-4
+#max_reward = 1
+#min_ts = 1
+#max_ts = 3600
+#min_deviation = 0.1
+#max_deviation = 5
 
-    # 1/8
-    if n % 2 == 0:
-        x *= x  # dev: SafeMath Check
-        n //= 2
-    else:
-        y *= x  # dev: SafeMath Check
-        x *= x  # dev: SafeMath Check
-        n -= 1
-        n //= 2
+# coeff
+#[-435426.012, -91396091300000.0, 3776907750000000.0, 63953129299.99999, 5670509380.0, 1.92634303e+16]
+coeff: public(int256[6])
+intercept: public(int256)
 
-    # 2/8
-    if n <= 1:
-        return x * y
 
-    if n % 2 == 0:
-        x *= x  # dev: SafeMath Check
-        n //= 2
-    else:
-        y *= x  # dev: SafeMath Check
-        x *= x  # dev: SafeMath Check
-        n -= 1
-        n //= 2
-
-    # 3/8
-    if n <= 1:
-        return x * y
-
-    if n % 2 == 0:
-        x *= x  # dev: SafeMath Check
-        n //= 2
-    else:
-        y *= x  # dev: SafeMath Check
-        x *= x  # dev: SafeMath Check
-        n -= 1
-        n //= 2
-
-    # 4/8
-    if n <= 1:
-        return x * y
-
-    if n % 2 == 0:
-        x *= x  # dev: SafeMath Check
-        n //= 2
-    else:
-        y *= x  # dev: SafeMath Check
-        x *= x  # dev: SafeMath Check
-        n -= 1
-        n //= 2
-
-    # 5/8
-    if n <= 1:
-        return x * y
-    if n % 2 == 0:
-        x *= x  # dev: SafeMath Check
-        n //= 2
-    else:
-        y *= x  # dev: SafeMath Check
-        x *= x  # dev: SafeMath Check
-        n -= 1
-        n //= 2
-
-    # 6/8
-    if n <= 1:
-        return x * y
-
-    if n % 2 == 0:
-        x *= x  # dev: SafeMath Check
-        n //= 2
-    else:
-        y *= x  # dev: SafeMath Check
-        x *= x  # dev: SafeMath Check
-        n -= 1
-        n //= 2
-
-    # 7/8
-    if n <= 1:
-        return x * y
-
-    if n % 2 == 0:
-        x *= x  # dev: SafeMath Check
-        n //= 2
-    else:
-        y *= x  # dev: SafeMath Check
-        x *= x  # dev: SafeMath Check
-        n -= 1
-        n //= 2
-
-    # 8/8
-    if n <= 1:
-        return x * y
-
-    if n % 2 == 0:
-        x *= x  # dev: SafeMath Check
-        n //= 2
-    else:
-        y *= x  # dev: SafeMath Check
-        x *= x  # dev: SafeMath Check
-        n -= 1
-        n //= 2
-
-    assert n <= 1, UNREACHABLE  # dev: exceeded expected number of iterations
-
-    return x * y  # dev: SafeMath Check
 @deploy
 def __init__(_control_variable: bytes32, _kp: int256, _ki: int256, _co_bias: int256,
-_per_second_integral_leak: uint256, _output_upper_bound: int256,
-_output_lower_bound: int256, imported_state: int256[3]):
+             _output_upper_bound: int256, _output_lower_bound: int256, _target_time_since: uint256,
+             _min_reward: uint256, _max_reward: uint256, _min_ts: uint256,
+             _max_ts: uint256, _min_deviation: uint256, _max_deviation: uint256,
+             _window_size: uint256, oracle_address: address,
+             _coeff: int256[6], _intercept: int256):
     #
     assert _output_upper_bound >= _output_lower_bound, "PIController/invalid-bounds"
-    assert convert(imported_state[0], uint256) <= block.timestamp, "PIController/invalid-imported-time"
-    self.authorities[msg.sender] = 1
+    assert oracle_address.is_contract, "Oracle address is not a contract"
+
+    self.authorities[msg.sender] = True
     self.control_variable = _control_variable
     self.kp = _kp
     self.ki = _ki
     self.co_bias = _co_bias
-    self.per_second_integral_leak = _per_second_integral_leak
     self.output_upper_bound = _output_upper_bound
     self.output_lower_bound = _output_lower_bound
-    self.last_update_time = convert(imported_state[0], uint256)
-    self.last_error = imported_state[1]
-    self.error_integral = imported_state[2]
+    self.target_time_since = _target_time_since
+    self.min_reward = _min_reward
+    self.max_reward = _max_reward
+    self.min_ts = _min_ts
+    self.max_ts = _max_ts
+    self.min_deviation = _min_deviation
+    self.max_deviation = _max_deviation
+    self.window_size = _window_size
+    self.oracle = IOracle(oracle_address)
+    self.coeff = _coeff
+    self.intercept = _intercept
+    self.last_update_time = 0
+    self.last_error = 0
+    self.error_integral = 0
 
 @external
 def add_authority(account: address):
-    self.authorities[account] = 1
+    assert self.authorities[msg.sender]
+    self.authorities[account] = True
     
 @external
 def remove_authority(account: address):
-    self.authorities[account] = 0
+    assert self.authorities[msg.sender]
+    self.authorities[account] = False
+
+@external
+def set_scales(chain_ids: uint256[64], scales: uint256[64]):
+    assert self.authorities[msg.sender]
+    for i: uint256 in range(64):
+        self.scales[chain_ids[i]] = scales[i]
 
 @external
 def modify_parameters_addr(parameter: String[32], addr: address):
+    assert self.authorities[msg.sender]
     if (parameter == "updater"):
         self.updater = addr
     else:
         raise "PIController/modify-unrecognized-param"
 
 @external
-def modify_parameters_uint(parameter: String[32], val: uint256):
-    if (parameter == "per_second_integral_leak"):
-        assert val <= TWENTY_SEVEN_DECIMAL_NUMBER, "PIController/invalid-per_second_integral_leak"
-        self.per_second_integral_leak = val
-    else:
-        raise "PIController/modify-unrecognized-param"
-
-@external
 def modify_parameters_int(parameter: String[32], val: int256):
+    assert self.authorities[msg.sender]
     if (parameter == "output_upper_bound"):
         assert val > self.output_lower_bound, "PIController/invalid-output_upper_bound"
         self.output_upper_bound = val
@@ -559,12 +172,7 @@ def _get_new_error_integral(error: int256) -> (int256, int256):
     
     new_time_adjusted_error: int256 = self._riemann_sum(error, self.last_error) * convert(elapsed, int256)
 
-    #accumulated_leak: uint256 = RAY if self.per_second_integral_leak == convert(1E27, uint256) else self.my_exp_uint256(self.per_second_integral_leak, elapsed, RAY)
-
-    accumulated_leak: uint256 = RAY
-    leaked_error_integral: int256 = (convert(accumulated_leak, int256) * self.error_integral) // convert(TWENTY_SEVEN_DECIMAL_NUMBER, int256)
-    
-    return (leaked_error_integral + new_time_adjusted_error, new_time_adjusted_error)
+    return (self.error_integral + new_time_adjusted_error, new_time_adjusted_error)
 
 @external
 @view
@@ -584,8 +192,103 @@ def _get_raw_pi_output(error: int256, errorI: int256) -> (int256, int256, int256
 @view
 def get_raw_pi_output(error: int256, errorI: int256) -> (int256, int256, int256):
     return self._get_raw_pi_output(error, errorI)
-    
+
 @external
+def update_oracle(chain_id: uint256, new_value: uint256):
+    current_value: uint256 = 0
+    last_update_time: uint256 = 0
+    current_value, last_update_time = staticcall self.oracle.get_value(chain_id)
+    target_scale: uint256 = self.scales[chain_id]
+
+    deviation: uint256 = 0
+    if new_value > current_value:
+        deviation = min((new_value - current_value)*10**18//target_scale, self.max_deviation)
+    else:
+        deviation = min((current_value - new_value)*10**18//target_scale, self.max_deviation)
+
+    time_since: uint256 = block.timestamp - last_update_time
+
+    reward: int256 = self._calc_reward(convert(time_since, int256), convert(deviation, int256))
+
+    # calculate reward adjustment
+    self._add_value(time_since)
+    update_interval: int256 = convert(self._get_average(), int256)
+    error: int256 = (update_interval - convert(self.target_time_since, int256)) * 10**18 // update_interval
+    pi_output: int256 = 0
+    p_output: int256 = 0
+    i_output: int256 = 0
+
+    pi_output, p_output, i_output = self.update(error)
+
+    reward_adj: int256 = pi_output * reward //10**18
+
+    assert reward_adj > 0
+
+    self.rewards[msg.sender] += convert(reward_adj, uint256)
+
+    extcall self.oracle.update_value(new_value)
+
+
+def _calc_reward(time_since: int256, deviation: int256) -> int256:
+    return min(max(self.coeff[0] + self.coeff[1]*time_since//10**18 + self.coeff[2]*deviation//10**18 + 
+           self.coeff[3]*time_since*time_since//10**18//10**18 +
+           self.coeff[5]*deviation*deviation//10**18//10**18 + 
+           self.intercept, convert(self.min_reward, int256)), convert(self.max_reward, int256))
+
+
+@internal
+def _add_value(new_value: uint256):
+   
+    #Add a new value to the circular buffer and update rolling sum.
+    
+    old_value: uint256 = 0
+
+    if self.count < self.window_size:
+        # Buffer not full yet
+        self.count += 1
+    else:
+        # Buffer full: value at index will be overwritten
+        old_value = self.oracle_values[self.index]
+
+    # Update rolling sum
+    self.rolling_sum = self.rolling_sum + new_value - old_value
+
+    # Store new value in buffer
+    self.oracle_values[self.index] = new_value
+
+    # Update index (circular increment)
+    self.index = (self.index + 1) % self.window_size
+
+@internal
+@view
+def _get_average() -> uint256:
+    if self.count == 0:
+        return 0  # Avoid division by zero if no values added yet
+    return self.rolling_sum // self.count
+
+@view
+@external
+def _get_next_average(potential_value: uint256) -> uint256:
+    """
+    Simulate what the average would be if `potential_value` was added.
+    Does NOT update state.
+    """
+    temp_sum: uint256 = self.rolling_sum
+    temp_count: uint256 = self.count
+
+    if self.count < self.window_size:
+        # Buffer not full yet
+        temp_sum += potential_value
+        temp_count += 1
+    else:
+        # Buffer full: would replace value at `index`
+        old_value: uint256 = self.oracle_values[self.index]
+        temp_sum = temp_sum + potential_value - old_value
+
+    return temp_sum // temp_count
+
+
+@internal
 def update(error: int256) -> (int256, int256, int256):
     assert self.updater == msg.sender, "PIController/invalid-msg-sender"
 
@@ -621,6 +324,11 @@ def last_update() -> (uint256, int256, int256, int256):
 @external
 @view
 def get_new_pi_output(error: int256) -> (int256, int256, int256):
+    return self._get_new_pi_output(error)
+
+@internal
+@view
+def _get_new_pi_output(error: int256) -> (int256, int256, int256):
     new_error_integral: int256 = 0
     tmp: int256 = 0
     (new_error_integral, tmp) = self._get_new_error_integral(error)

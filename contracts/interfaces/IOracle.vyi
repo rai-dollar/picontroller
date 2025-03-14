@@ -1,0 +1,12 @@
+# pragma version ~=0.4.0
+
+# IOracle
+
+@external
+@view
+def get_value(chain_id: uint256) -> (uint256, uint256):
+    ...
+
+@external
+def update_value(new_value: uint256):
+    ...
