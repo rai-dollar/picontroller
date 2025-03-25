@@ -1,6 +1,5 @@
 #pragma version ~=0.4.1
 
-
 from interfaces import IOracle
 import store
 
@@ -12,24 +11,6 @@ event OracleUpdated:
     time_reward: uint256
     deviation_reward: uint256
     reward_mult: int256
-
-event UpdateTime:
-    new_time: uint48
-    last_update_time: uint48
-
-event TypeVal:
-    typ: uint16
-    val: uint256
-
-event StoreValues:
-    time: uint256
-
-event StoreValuesHeader:
-    version: uint8
-    payload_len: uint16
-    scid: uint88
-    ts: uint48
-    height: uint64
 
 struct Scale:
     chain_id: uint64
@@ -378,11 +359,6 @@ def update_oracle_mock(chain_id: uint64, new_value: uint256, new_height: uint64)
     time_reward_adj_u: uint256 = convert(time_reward_adj, uint256)
     deviation_reward_adj_u: uint256 = convert(deviation_reward_adj, uint256)
     self.rewards[msg.sender] += time_reward_adj_u + deviation_reward_adj_u
-
-    #log OracleUpdated(chain_id, new_value,
-    #                  deviation, time_since,
-    #                  reward, reward_mult,
-    #                  reward_adj)
 
     extcall self.oracle.set_value(chain_id, new_value, new_height)
 
