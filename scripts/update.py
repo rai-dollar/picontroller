@@ -17,15 +17,17 @@ SEPOLIA_ORACLE = oracle_addresses[11155111]#'0xCc936bE977BeDb5140C5584d8B6043C90
 controller = project.RewardController.at("0xe48555990092ff02a7cdd0e6b772fba9b7a3e9fd")
 
 account = accounts.load("blocknative_dev")
-# Set scales
-"""
-scales = list(zip(params.scales.keys(), params.scales.values()))
-print(scales)
 
-controller.set_scales(scales, sender=account)
-for s in params.scales.keys():
-    print(s, controller.scales(s))
-"""
+def set_scales(account, controller, params):
+    scales = list(zip(params.scales.keys(), params.scales.values()))
+    controller.set_scales(scales, sender=account)
+    for s in params.scales.keys():
+        print(s, controller.scales(s))
+
+# Set scales
+
+set_scales(account, controller, params)
+import sys;sys.exit()
 
 oracle_sepolia = Contract(SEPOLIA_ORACLE, abi=gas_oracle_v2_abi)
 

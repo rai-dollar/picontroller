@@ -75,18 +75,19 @@ def _decode_header(dat: Bytes[4096]) -> (uint16, uint88, uint48, uint64):
 
 @external
 @pure
-def decode_sid_cid(dat: Bytes[4096]) -> (uint8, uint64, uint16, uint48):
+def decode_sid_cid(dat: Bytes[4096]) -> (uint8, uint64, uint16, uint48, uint64):
     return self._decode_sid_cid(dat)
 
 @internal
 @pure
-def _decode_sid_cid(dat: Bytes[4096]) -> (uint8, uint64, uint16, uint48):
+def _decode_sid_cid(dat: Bytes[4096]) -> (uint8, uint64, uint16, uint48, uint64):
+    h: uint64 = convert(slice(dat, 23, 8), uint64)  # Extract last 8 bytes of 32-byte block, excluding version
     cid: uint64 = convert(slice(dat, 15, 8), uint64)
     sid: uint8 = convert(slice(dat, 14, 1), uint8)
     plen: uint16 = convert(slice(dat, 6, 2), uint16)
     ts: uint48 = convert(slice(dat, 8, 6), uint48)  # Extract 6 bytes before sid
 
-    return sid, cid, plen, ts
+    return sid, cid, plen, ts, h
 
 @internal
 @pure
@@ -151,20 +152,21 @@ def encode_parameter(typ: uint16, val: uint256) -> bytes32:
 
 @external
 @pure
-def decode(dat: Bytes[4096], requested_typ: uint16) -> (uint8, uint64, uint16, uint240, uint48):
+def decode(dat: Bytes[4096], requested_typ: uint16) -> (uint8, uint64, uint16, uint240, uint48, uint64):
     return self._decode(dat, requested_typ)
 
 @internal
 @pure
-def _decode(dat: Bytes[4096], requested_typ: uint16) -> (uint8, uint64, uint16, uint240, uint48):
+def _decode(dat: Bytes[4096], requested_typ: uint16) -> (uint8, uint64, uint16, uint240, uint48, uint64):
     # system_id, c_id, type, val, ts
     assert requested_typ != 0, "requested_typ can't be zero"
     sid: uint8 = 0
     cid: uint64 = 0
     plen: uint16 = 0
     ts: uint48 = 0
+    h: uint64 = 0
 
-    sid, cid, plen, ts = self._decode_sid_cid(dat)
+    sid, cid, plen, ts, h = self._decode_sid_cid(dat)
     plen_int: uint256 = convert(plen, uint256)
 
     typ: uint16 = 0
@@ -174,12 +176,13 @@ def _decode(dat: Bytes[4096], requested_typ: uint16) -> (uint8, uint64, uint16, 
         val_b: Bytes[32] = slice(dat, 32 + j*32, 32)  
         typ = convert(slice(val_b, 0, 2), uint16)
         val = convert(slice(val_b, 2, 30), uint240)
+        # stop at first typ match
         if typ == requested_typ:
             break
 
     assert typ == requested_typ, "requested_typ not present"
 
-    return sid, cid, typ, val, ts
+    return sid, cid, typ, val, ts, h
 
 @external
 def store_values(dat: Bytes[4096]):

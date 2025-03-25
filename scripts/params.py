@@ -7,6 +7,7 @@ target_time_since = 1800 * 10**18
 default_window_size = 20
 
 # reward calc
+reward_type = 322 # 90th maxPf
 min_reward = 10**14 #1e-4
 max_reward = 10**18 #1
 min_ts = 10**18 #11
@@ -19,4 +20,8 @@ coeff = [10611581, 3777134486958753, 38572373423, 5670509383, 19263385883489428]
 scales = {42161: 99340000000000000, # Arbitrum
           8453: 144939290000000000, # Base
           59144: 612710000000000000, # Linea
-          10: 228550000000000}
+          10: 228550000000000, # Opt
+          1868: 228550000000000, # Soneium TODO: UPDATE
+          130: 228550000000000, # Unichain TODO: UPDATE
+          1: 10**18 #ethereum TODO: update
+          }

@@ -15,7 +15,8 @@ EIGHTEEN_DECIMAL_NUMBER     = int(10 ** 18)
 
 update_delay = 3600;
 
-SEPOLIA_ORACLE = '0xCc936bE977BeDb5140C5584d8B6043C9068622A6'
+from oracles import oracle_addresses
+SEPOLIA_ORACLE = oracle_addresses[11155111]
 
 @pytest.fixture
 def owner(accounts):
@@ -24,13 +25,13 @@ def owner(accounts):
 @pytest.fixture
 def controller(owner, oracle, project, chain):
     controller = owner.deploy(project.RewardController,
-            b'test control variable',
             params.kp,
             params.ki,
             params.co_bias,
             params.output_upper_bound,
             params.output_lower_bound,
             params.target_time_since,
+            params.reward_type,
             params.min_reward,
             params.max_reward,
             params.default_window_size,
@@ -38,22 +39,31 @@ def controller(owner, oracle, project, chain):
             params.coeff,
             sender=owner)
 
-    controller.set_scale(1, 3*10**15, sender=owner)
-    controller.set_scale(10, 10000, sender=owner)
-    #controller.set_scales([1,10], [3*10**15, 10000], sender=owner)
-    #chain.mine(1, timestamp=chain.pending_timestamp+2)
+    #controller.set_scale(1, 3*10**15, sender=owner)
+    #controller.set_scale(10, 10000, sender=owner)
+    set_scales(owner, controller, params)
+    # deploy sets last update time and updates can't happen if blocktime=lastupdatetime
+    # so fast forward 1 block
+    chain.mine(1, timestamp = chain.pending_timestamp + 2)
     return controller
+
+
+def set_scales(account, controller, params):
+    scales = list(zip(params.scales.keys(), params.scales.values()))
+    controller.set_scales(scales, sender=account)
+    for s in params.scales.keys():
+        print(s, controller.scales(s))
 
 @pytest.fixture
 def controller_sepolia(owner, project):
     controller = owner.deploy(project.RewardController,
-            b'test control variable',
             params.kp,
             params.ki,
             params.co_bias,
             params.output_upper_bound,
             params.output_lower_bound,
             params.target_time_since,
+            params.reward_type,
             params.min_reward,
             params.max_reward,
             params.default_window_size,
@@ -61,10 +71,11 @@ def controller_sepolia(owner, project):
             params.coeff,
             sender=owner)
 
-    controller.set_scale(1, 3*10**15, sender=owner)
-    controller.set_scale(10, 10000, sender=owner)
+    #controller.set_scale(1, 3*10**15, sender=owner)
+    #controller.set_scale(10, 10000, sender=owner)
     #controller.set_scales([1,10], [3*10**15, 10000], sender=owner)
     #chain.mine(1, timestamp=chain.pending_timestamp+2)
+    set_scales(owner, controller, params)
     return controller
 
 @pytest.fixture
@@ -559,16 +570,11 @@ class TestRewardController:
                  error_integral2 * controller.ki()/EIGHTEEN_DECIMAL_NUMBER);
         
     def test_lower_clamping(self, owner, controller, chain):
-        #controller.modify_parameters_int("kp", int(2.25*10**11), sender=owner);
-        #controller.modify_parameters_int("ki", int(7.2 * 10**4), sender=owner);
-        #controller.modify_parameters_int("kp", int(2.25*10**11), sender=owner);
-        #controller.modify_parameters_int("ki", int(7.2 * 10**4), sender=owner);
         assert controller.kp() < 0
         assert controller.ki() < 0
 
         chain.pending_timestamp += update_delay
 
-        #error = relative_error(int(1.01* 10**18), 10**27);
         error = controller.error(1800*10**18, 1750*10**18)
         assert error > 0
 
@@ -578,7 +584,7 @@ class TestRewardController:
         assert pi_output < controller.co_bias();
         assert pi_output > controller.output_lower_bound();
 
-        assert controller.error_integral() != 0
+        assert controller.error_integral() == error
 
         chain.pending_timestamp += update_delay
 
@@ -591,76 +597,92 @@ class TestRewardController:
         (_, pi_output2, _, _) = controller.last_update()
         assert pi_output2 < pi_output;
         assert pi_output2 > controller.output_lower_bound();
-        assert controller.error_integral() - error == error
+        assert controller.error_integral() == 2*error
 
         chain.pending_timestamp += update_delay
 
         # Third error: very large. Output hits lower bound
-        # Integral *does not* accumulate when it hits bound with same sign of current integral
+        # Integral *does not* accumulate
         huge_error = controller.error(1800*10**18, 1*10**18)
         assert error > 0
+
+        (new_integral, new_area) = controller.get_new_error_integral(huge_error);
+        assert new_area == huge_error
+        assert new_integral == error * 2 + huge_error
 
         controller.update(huge_error, sender=owner);
         (_, pi_output3, _, _) = controller.last_update()
         assert pi_output3 == controller.output_lower_bound()
 
         # Integral doesn't accumulate
-        assert controller.error_integral() - error == error
+        clamped_integral = controller.error_integral()
+        assert clamped_integral == 2* error
 
         chain.pending_timestamp += update_delay
-        return
 
         # Integral *does* accumulate with a smaller error(doesn't hit output bound)
-        small_neg_error = relative_error(int(1.01* 10**18), 10**27);
-
-        controller.update(small_neg_error, sender=owner);
+        controller.update(error, sender=owner);
         (_, pi_output4, _, _) = controller.last_update()
-        assert controller.error_integral() < -36000000000000000000000000000;
+        assert controller.error_integral() > clamped_integral;
         assert pi_output4 > controller.output_lower_bound();
 
     def test_upper_clamping(self, owner, controller, chain):
-        controller.modify_parameters_int("kp", int(2.25*10**11), sender=owner);
-        controller.modify_parameters_int("ki", int(7.2 * 10**4), sender=owner);
-        controller.modify_parameters_int("output_upper_bound", int(0.00000001 * 10**27), sender=owner);
+        assert controller.kp() < 0
+        assert controller.ki() < 0
 
         chain.pending_timestamp += update_delay
 
-        error = relative_error(int(0.999999* 10**18), 10**27);
+        error = controller.error(1800*10**18, 1850*10**18)
+        assert error < 0
+
+        # First error: small, output doesn't hit upper bound
         controller.update(error, sender=owner);
         (_, pi_output, _, _) = controller.last_update()
-        assert pi_output > 0;
+        assert pi_output > controller.co_bias();
         assert pi_output < controller.output_upper_bound();
-        assertEq(controller.error_integral(), 0);
+
+        assert controller.error_integral() == error
 
         chain.pending_timestamp += update_delay
 
-        (leaked_integral, new_area) = controller.get_new_error_integral(error);
-        assertEq(leaked_integral, error * update_delay);
-        assertEq(new_area, error * update_delay);
+        (new_integral, new_area) = controller.get_new_error_integral(error);
+        assert new_integral == error * 2
+        assert new_area == error
 
-
+        # Second error: small, output doesn't hit lower bound
         controller.update(error, sender=owner);
         (_, pi_output2, _, _) = controller.last_update()
         assert pi_output2 > pi_output;
-        assertEq(controller.error_integral(), update_delay * error + error);
-
-        # Integral *does not* accumulate when it hits bound with same sign of current integral
-        huge_neg_error = relative_error(1, 10**27);
+        assert pi_output2 < controller.output_upper_bound();
+        assert controller.error_integral() == 2*error
 
         chain.pending_timestamp += update_delay
 
-        controller.update(huge_neg_error, sender=owner);
+        # Third error: very large. Output hits upper bound
+        # Integral *does not* accumulate
+        huge_error = controller.error(1800*10**18, 100000*10**18)
+        assert error < 0
+
+        # get_new_error_integral() does not clamp
+        (new_integral, new_area) = controller.get_new_error_integral(huge_error);
+        assert new_area == huge_error
+        assert new_integral == error * 2 + huge_error
+
+        controller.update(huge_error, sender=owner);
         (_, pi_output3, _, _) = controller.last_update()
-        assertEq(pi_output3, controller.output_upper_bound());
-        assertEq(controller.error_integral(), update_delay * error + error);
-        
-        # Integral *does* accumulate with a smaller error(doesn't hit output bound)
-        smallPosError = relative_error(int(0.999999*10**18), 10**27);
+        assert pi_output3 == controller.output_upper_bound()
+
+        # Integral doesn't accumulate
+        clamped_integral = controller.error_integral()
+        assert clamped_integral == 2* error
+
         chain.pending_timestamp += update_delay
 
-        controller.update(smallPosError, sender=owner);
-        (_, output4, _, _) = controller.last_update()
-        assert(output4 < controller.output_upper_bound());
+        # Integral *does* accumulate with a smaller error(doesn't hit output bound)
+        controller.update(error, sender=owner);
+        (_, pi_output4, _, _) = controller.last_update()
+        assert controller.error_integral() < clamped_integral;
+        assert pi_output4 < controller.output_upper_bound();
 
     def test_bounded_output_proportional_calculation(self, owner, controller, chain):
         # small error
@@ -814,6 +836,7 @@ class TestRewardController:
 
     def test_time_reward(self, owner, store, controller, chain):
         assert controller.calc_time_reward(0) == controller.min_time_reward()
+        assert controller.calc_time_reward(35*10**18) == controller.min_time_reward()
         assert controller.calc_time_reward(2740774000*10**18) == controller.max_time_reward()
 
     def test_calc_time_reward_min(self, owner, controller):
@@ -832,7 +855,6 @@ class TestRewardController:
     def test_calc_deviation_reward_min(self, owner, controller):
         assert controller.min_deviation_reward() == params.min_reward//2
         assert controller.calc_deviation_reward(0) - params.min_reward//2 == 0
-        assert controller.calc_deviation_reward(params.min_deviation) - params.min_reward//2 < 10**15
 
     def test_calc_deviation_reward_max(self, owner, controller):
         assert controller.max_deviation_reward() == params.max_reward//2
@@ -872,29 +894,12 @@ class TestRewardController:
 
     def test_update_oracle_max_reward(self, owner, controller, chain):
         # fast forward to get maximum time since last oracle update
-        chain.mine(1800, timestamp = chain.pending_timestamp + 1800*2)
+        #chain.mine(1800, timestamp = chain.pending_timestamp + 1800*2)
 
+        assert controller.rewards(owner) == 0
         tx = controller.update_oracle_mock(1, 1900*10**18, 300, sender=owner);
-        chain.mine(1, timestamp = chain.pending_timestamp + 2)
-        tx = controller.update_oracle_mock(1, 1910*10**18, 301, sender=owner);
-        chain.mine(1, timestamp = chain.pending_timestamp + 2)
-        tx = controller.update_oracle_mock(1, 1910*10**18, 302, sender=owner);
-        chain.mine(1, timestamp = chain.pending_timestamp + 2)
-        tx = controller.update_oracle_mock(1, 1910*10**18, 303, sender=owner);
-        chain.mine(1, timestamp = chain.pending_timestamp + 2)
-        tx = controller.update_oracle_mock(1, 1910*10**18, 304, sender=owner);
-        chain.mine(1, timestamp = chain.pending_timestamp + 2)
-        tx = controller.update_oracle_mock(1, 1910*10**18, 305, sender=owner);
-
-        """
-        # Decode the logs/events from transaction
-        events = list(tx.decode_logs())
-        e = events[0]
-        assert len(events) == 1
-        assert e.reward == params.max_reward
-        """
-
-        #assert controller.rewards(owner) == params.max_reward
+        # right after deploy, large deviation, but small time reward
+        assert controller.rewards(owner) == params.min_reward//2 + params.max_reward//2
 
     def test_update_oracle_min_reward(self, owner, controller, chain):
 
@@ -1022,7 +1027,7 @@ class TestRewardController:
         assert sid == 2
         assert cid == 1
 
-    def _test_fork(self, owner, store, oracle_sepolia, controller_sepolia, chain):
+    def test_fork(self, owner, store, oracle_sepolia, controller_sepolia, chain):
 
         #a: bytes = b'\x00\x00\x00\x00\x00\x00\x00\x03\x01\x95\xb6+\xfcv\x02\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x01Q\x17\xed\x01\x00k\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1b\x8dy\xed\x00p\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x01B\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x05N\x08A\x8b\xb7B^\xb0n\xa2XgHC\xabaC\xa1\xab\\L\x98\xcd\x07\x95[\xc1$\xdf\x0f2q\xf4KDe]B5\x90\x92\n2\xcf7\xa8i\xcey\xb5\x90\xac\x03\xdd\xa7\xd5\xfc\xbc\xc5\xe4\xde\x04B\x17C\x00U\x1c'
 

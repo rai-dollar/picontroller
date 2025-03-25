@@ -43,6 +43,7 @@ co_bias: public(int256)
 output_upper_bound: public(int256)
 output_lower_bound: public(int256)
 target_time_since: public(uint256)
+reward_type: public(uint16)
 min_reward: public(uint256)
 max_reward: public(uint256)
 min_time_reward: public(int256)
@@ -81,7 +82,7 @@ intercept: public(int256)
 @deploy
 def __init__(_kp: int256, _ki: int256, _co_bias: int256,
              _output_upper_bound: int256, _output_lower_bound: int256, _target_time_since: uint256,
-             _min_reward: uint256, _max_reward: uint256,
+             _reward_type: uint16, _min_reward: uint256, _max_reward: uint256,
              _default_window_size: uint256, oracle: address,
              _coeff: int256[5]):
     #
@@ -95,6 +96,7 @@ def __init__(_kp: int256, _ki: int256, _co_bias: int256,
     self.output_upper_bound = _output_upper_bound
     self.output_lower_bound = _output_lower_bound
     self.target_time_since = _target_time_since
+    self.reward_type = _reward_type
     self.min_reward = _min_reward
     self.max_reward = _max_reward
     self.min_time_reward = convert(_min_reward//2, int256)
@@ -200,13 +202,20 @@ def _bound_pi_output(pi_output: int256) -> int256:
 def bound_pi_output(pi_output: int256) -> int256:
     return self._bound_pi_output(pi_output)
 
-@internal
+@external
 @view
 def clamp_error_integral(bounded_pi_output:int256, new_error_integral: int256, new_area: int256) -> int256:
+    return self._clamp_error_integral(bounded_pi_output, new_error_integral, new_area)
+
+@internal
+@view
+def _clamp_error_integral(bounded_pi_output:int256, new_error_integral: int256, new_area: int256) -> int256: 
+    # This logic is strictly for a *reverse-acting* controller where controller
+    # output is opposite sign of error(kp and ki < 0)
     clamped_error_integral: int256 = new_error_integral
-    if (bounded_pi_output == self.output_lower_bound and new_area < 0 and self.error_integral < 0):
+    if (bounded_pi_output == self.output_lower_bound and new_area > 0 and self.error_integral > 0):
         clamped_error_integral = clamped_error_integral - new_area
-    elif (bounded_pi_output == self.output_upper_bound and new_area > 0 and self.error_integral > 0):
+    elif (bounded_pi_output == self.output_upper_bound and new_area < 0 and self.error_integral < 0):
         clamped_error_integral = clamped_error_integral - new_area
     return clamped_error_integral
 
@@ -251,35 +260,34 @@ def update_oracle(dat: Bytes[4096])-> (uint256, uint256):
     typ: uint16 = 0
     new_value: uint240 = 0
     new_ts: uint48 = 0
+    new_height: uint64 = 0
 
     # new values
-    # should 107 be param, constant or global var?
-    sid, cid, typ, new_value, new_ts = store._decode(dat, 107)
+    sid, cid, typ, new_value, new_ts, new_height = store._decode(dat, self.reward_type)
 
     new_value_u: uint256 = convert(new_value, uint256)
 
     current_value: uint256 = 0
     current_height: uint64 = 0
-    last_update_time: uint48 = 0
+    current_ts: uint48 = 0
 
     # Current oracle values
-    (current_value, current_height, last_update_time) = staticcall self.oracle.get(sid, cid, typ)
+    (current_value, current_height, current_ts) = staticcall self.oracle.get(sid, cid, typ)
 
-    # TODO consider scale = 0
     target_scale: uint256 = self.scales[cid]
     assert target_scale != 0, "scale for cid is zero"
 
     # get update deviation and staleness(time_since)
     deviation: uint256 = 0
     if new_value_u > current_value:
-        #deviation = min((new_value_u - current_value)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale, self.max_deviation)
         deviation = (new_value_u - current_value)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
     else:
-        #deviation = min((current_value - new_value_u)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale, self.max_deviation)
         deviation = (current_value - new_value_u)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
-   
-    assert new_ts >= last_update_time, "new ts is less than last update"
-    time_since: uint256 = convert(new_ts - last_update_time, uint256)
+  
+    # This matches acceptance criteria in oracle
+    assert new_height > current_height or (new_height==current_height and new_ts > current_ts), "new values are old"
+
+    time_since: uint256 = convert(new_ts - current_ts, uint256) * EIGHTEEN_DECIMAL_NUMBER_U
 
     # calculate update reward
     time_reward: int256 = 0
@@ -329,7 +337,6 @@ def update_oracle_mock(chain_id: uint64, new_value: uint256, new_height: uint64)
     current_height: uint64 = 0
     last_update_time: uint48 = 0
     current_value, current_height, last_update_time = staticcall self.oracle.get_value(chain_id)
-    # TODO consider scale = 0
     target_scale: uint256 = self.scales[chain_id]
 
     assert target_scale != 0, "Target scale is zero"
@@ -533,8 +540,6 @@ def update(error: int256) -> (int256, int256, int256):
 
 @internal
 def _update(error: int256) -> (int256, int256, int256):
-    #assert self.updater == msg.sender, "RewardController/invalid-msg-sender"
-
     assert block.timestamp  > self.last_update_time, "RewardController/wait-longer"
 
     new_error_integral: int256 = 0
@@ -548,7 +553,7 @@ def _update(error: int256) -> (int256, int256, int256):
 
     bounded_pi_output: int256 = self._bound_pi_output(pi_output)
 
-    self.error_integral = self.clamp_error_integral(bounded_pi_output, new_error_integral, new_area)
+    self.error_integral = self._clamp_error_integral(bounded_pi_output, new_error_integral, new_area)
 
     self.last_update_time = block.timestamp
     self.last_error = error
