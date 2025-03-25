@@ -50,8 +50,6 @@ scales: public(HashMap[uint64, uint256])
 EIGHTEEN_DECIMAL_NUMBER: constant(int256) = 10**18
 EIGHTEEN_DECIMAL_NUMBER_U: constant(uint256) = 10**18
 
-
-# State Variables
 oracle_values: HashMap[uint64, HashMap[uint256, uint256]]  # Circular buffer simulated via mapping
 index: HashMap[uint64, uint256]  # Pointer to next insert position (0 to N-1)
 count: HashMap[uint64, uint256]  # Number of elements inserted so far, up to N
@@ -369,7 +367,6 @@ def update_oracle_mock(chain_id: uint64, new_value: uint256, new_height: uint64)
 def calc_reward(time_since: int256, deviation: int256) -> (int256, int256):
     return self._calc_reward(time_since, deviation)
 
-
 @external
 @view
 def calc_time_reward(time_since: int256) -> int256:
@@ -486,29 +483,6 @@ def resize_buffer(chain_id: uint64, new_window_size: uint256):
     self.index[chain_id] = items_to_keep % new_window_size  # Where next value will go
 
     # NOTE: Old values beyond `new_window_size` will remain in storage, but ignored logically.
-
-#@view
-#@external
-# DONT NEED
-#def _get_next_average(potential_value: uint256) -> uint256:
-#    """
-#    Simulate what the average would be if `potential_value` was added.
-#    Does NOT update state.
-#    """
-#    temp_sum: uint256 = self.rolling_sum
-#    temp_count: uint256 = self.count
-#
-#    if self.count < self.window_size:
-#        # Buffer not full yet
-#        temp_sum += potential_value
-#        temp_count += 1
-#    else:
-#        # Buffer full: would replace value at `index`
-#        old_value: uint256 = self.oracle_values[self.index]
-#        temp_sum = temp_sum + potential_value - old_value
-#
-#    return temp_sum // temp_count
-
 
 @external
 def update(error: int256) -> (int256, int256, int256):
