@@ -1,9 +1,12 @@
-#pragma version ~=0.4.1
+#pragma version 0.4.1
+#pragma optimize none
 
-from interfaces import IOracle
-import store
+interface IOracle:
+    def get(systemid: uint8, cid: uint64, typ: uint16) -> (uint256, uint64, uint48): view
+    def storeValues(dat: Bytes[4096]): nonpayable
 
 event OracleUpdated:
+    updater: address,
     chain_id: uint64
     new_value: uint256
     deviation: uint256
@@ -16,15 +19,28 @@ struct Scale:
     chain_id: uint64
     scale: uint256
 
+struct Coefficients:
+    zero: int96
+    one: int96
+    two: int96
+    three: int96
+
+struct ControlOutput:
+    kp: int80
+    ki: int80
+    co_bias: int80
+
+BASEFEE_REWARD_TYPE: public(constant(uint16)) = 107
+
 authorities: public(HashMap[address, bool])
 
-kp: public(int256)
-ki: public(int256)
-co_bias: public(int256)
+tip_reward_type: public(uint16)
+
+control_output: public(ControlOutput)
+
 output_upper_bound: public(int256)
 output_lower_bound: public(int256)
 target_time_since: public(uint256)
-reward_type: public(uint16)
 min_reward: public(uint256)
 max_reward: public(uint256)
 min_time_reward: public(int256)
@@ -35,47 +51,48 @@ default_window_size: public(uint256)
 window_size: HashMap[uint64, uint256]
 oracle: public(IOracle)
 
-error_integral: public(int256)
-last_error: public(int256)
-last_output: public(int256)
-last_p_output: public(int256)
-last_i_output: public(int256)
-last_update_time: public(uint256)
-
-updater: public(address)
+#error_integral: public(int256)
+error_integral: public(HashMap[uint64, int256])
+#last_output: public(HashMap[uint64, int256])
+#last_p_output: public(HashMap[uint64, int256])
+#last_i_output: public(HashMap[uint64, int256])
+#last_update_time: public(HashMap[uint64, uint256])
 
 rewards: public(HashMap[address, uint256])
+total_rewards: public(uint256)
 scales: public(HashMap[uint64, uint256])
-
-EIGHTEEN_DECIMAL_NUMBER: constant(int256) = 10**18
-EIGHTEEN_DECIMAL_NUMBER_U: constant(uint256) = 10**18
 
 oracle_values: HashMap[uint64, HashMap[uint256, uint256]]  # Circular buffer simulated via mapping
 index: HashMap[uint64, uint256]  # Pointer to next insert position (0 to N-1)
 count: HashMap[uint64, uint256]  # Number of elements inserted so far, up to N
 rolling_sum: HashMap[uint64, uint256]  # Sum of last N values for efficient averaging
 
-coeff: public(int256[5])
+#coeff: public(int96[4])
+coeff: public(Coefficients)
 intercept: public(int256)
 
+EIGHTEEN_DECIMAL_NUMBER: constant(int256) = 10**18
+THIRTY_SIX_DECIMAL_NUMBER: constant(int256) = 10**36
+EIGHTEEN_DECIMAL_NUMBER_U: constant(uint256) = 10**18
+
 @deploy
-def __init__(_kp: int256, _ki: int256, _co_bias: int256,
+def __init__(_kp: int80, _ki: int80, _co_bias: int80,
              _output_upper_bound: int256, _output_lower_bound: int256, _target_time_since: uint256,
-             _reward_type: uint16, _min_reward: uint256, _max_reward: uint256,
+             _tip_reward_type: uint16,
+             _min_reward: uint256, _max_reward: uint256,
              _default_window_size: uint256, oracle: address,
-             _coeff: int256[5]):
+             _coeff: int96[4]):
     #
     assert _output_upper_bound >= _output_lower_bound, "RewardController/invalid-bounds"
     assert oracle.is_contract, "Oracle address is not a contract"
+    assert _target_time_since > 0, "target_time_since must be positive"
 
     self.authorities[msg.sender] = True
-    self.kp = _kp
-    self.ki = _ki
-    self.co_bias = _co_bias
+    self.control_output = ControlOutput(kp=_kp, ki=_ki, co_bias=_co_bias)
     self.output_upper_bound = _output_upper_bound
     self.output_lower_bound = _output_lower_bound
     self.target_time_since = _target_time_since
-    self.reward_type = _reward_type
+    self.tip_reward_type = _tip_reward_type
     self.min_reward = _min_reward
     self.max_reward = _max_reward
     self.min_time_reward = convert(_min_reward//2, int256)
@@ -84,10 +101,8 @@ def __init__(_kp: int256, _ki: int256, _co_bias: int256,
     self.max_deviation_reward = convert(_max_reward//2, int256)
     self.default_window_size = _default_window_size
     self.oracle = IOracle(oracle)
-    self.coeff = _coeff
-    self.last_update_time = block.timestamp
-
-    self.updater = msg.sender
+    #self.coeff = _coeff
+    self.coeff = Coefficients(zero=_coeff[0], one=_coeff[1], two=_coeff[2], three=_coeff[3])
 
 @external
 def add_authority(account: address):
@@ -97,26 +112,22 @@ def add_authority(account: address):
 @external
 def remove_authority(account: address):
     assert self.authorities[msg.sender]
-
     self.authorities[account] = False
 
 @external
 def set_scales(scales: DynArray[Scale, 64]):
     assert self.authorities[msg.sender]
-
     for s: Scale in scales:
         self.scales[s.chain_id] = s.scale
 
 @external
 def set_scale(chain_id: uint64, scale: uint256):
     assert self.authorities[msg.sender]
-
     self.scales[chain_id] = scale
 
 @external
 def modify_parameters_addr(parameter: String[32], addr: address):
     assert self.authorities[msg.sender]
-
     if (parameter == "oracle"):
         assert addr.is_contract, "Oracle address is not a contract"
         self.oracle = IOracle(addr)
@@ -126,21 +137,24 @@ def modify_parameters_addr(parameter: String[32], addr: address):
 @external
 def modify_parameters_int(parameter: String[32], val: int256):
     assert self.authorities[msg.sender]
-
     if (parameter == "output_upper_bound"):
         assert val > self.output_lower_bound, "RewardController/invalid-output_upper_bound"
         self.output_upper_bound = val
     elif (parameter == "output_lower_bound"):
         assert val < self.output_upper_bound, "RewardController/invalid-output_lower_bound"
         self.output_lower_bound = val
-    elif (parameter == "kp"):
-        self.kp = val
+    else:
+        raise "RewardController/modify-unrecognized-param"
+
+@external
+def modify_parameters_control_output(parameter: String[32], val: int80):
+    assert self.authorities[msg.sender]
+    if (parameter == "kp"):
+        self.control_output = ControlOutput(kp=val, ki=self.control_output.ki, co_bias=self.control_output.co_bias)
     elif (parameter == "ki"):
-        self.ki = val
+        self.control_output = ControlOutput(kp=self.control_output.kp, ki=val, co_bias=self.control_output.co_bias)
     elif (parameter == "co_bias"):
-        self.co_bias = val
-    elif (parameter == "error_integral"):
-        self.error_integral = val
+        self.control_output = ControlOutput(kp=self.control_output.kp, ki=self.control_output.ki, co_bias=val)
     else:
         raise "RewardController/modify-unrecognized-param"
 
@@ -148,6 +162,7 @@ def modify_parameters_int(parameter: String[32], val: int256):
 def modify_parameters_uint(parameter: String[32], val: uint256):
     assert self.authorities[msg.sender]
     if (parameter == "target_time_since"):
+        assert val > 0, "target_time_since must be positive"
         self.target_time_since = val
     elif (parameter == "min_reward"):
         assert val < self.max_reward, "RewardController/invalid-min_reward"
@@ -159,6 +174,61 @@ def modify_parameters_uint(parameter: String[32], val: uint256):
         self.default_window_size = val
     else:
         raise "RewardController/modify-unrecognized-param"
+
+@external
+@pure
+def test_decode_head(dat: Bytes[4096]) -> (uint8, uint64, uint16, uint48, uint64):
+    return self._decode_head(dat)
+
+@internal
+@pure
+def _decode_head(dat: Bytes[4096]) -> (uint8, uint64, uint16, uint48, uint64):
+    h: uint64 = convert(slice(dat, 23, 8), uint64)  # Extract last 8 bytes of 32-byte block, excluding version
+    cid: uint64 = convert(slice(dat, 15, 8), uint64)
+    sid: uint8 = convert(slice(dat, 14, 1), uint8)
+    plen: uint16 = convert(slice(dat, 6, 2), uint16)
+    ts: uint48 = convert(slice(dat, 8, 6), uint48)  # Extract 6 bytes before sid
+
+    return sid, cid, plen, ts, h
+
+@external
+@pure
+def decode(dat: Bytes[4096], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
+    return self._decode(dat, tip_typ)
+
+@internal
+@pure
+def _decode(dat: Bytes[4096], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
+    sid: uint8 = 0 
+    cid: uint64 = 0 
+    plen: uint16 = 0 
+    ts: uint48 = 0 
+    h: uint64 = 0 
+
+    sid, cid, plen, ts, h = self._decode_head(dat)
+    plen_int: uint256 = convert(plen, uint256)
+
+    typ: uint16 = 0 
+    val: uint240 = 0 
+    basefee_val: uint240 = 0 
+    tip_val: uint240 = 0 
+    
+    for j: uint256 in range(plen_int, bound=256):
+        val_b: Bytes[32] = slice(dat, 32 + j*32, 32)  
+        typ = convert(slice(val_b, 0, 2), uint16)
+        val = convert(slice(val_b, 2, 30), uint240)
+
+        if typ == BASEFEE_REWARD_TYPE:
+            basefee_val = val
+        elif typ == tip_typ:
+            tip_val = val
+
+        # if both have been set, stop parsing
+        if basefee_val != 0 and tip_val !=0:
+            break
+
+    return sid, cid, basefee_val, tip_val, ts, h
+
 
 @internal
 @view
@@ -183,39 +253,40 @@ def bound_pi_output(pi_output: int256) -> int256:
 
 @external
 @view
-def clamp_error_integral(bounded_pi_output:int256, new_error_integral: int256, new_area: int256) -> int256:
-    return self._clamp_error_integral(bounded_pi_output, new_error_integral, new_area)
+def clamp_error_integral(bounded_pi_output:int256, error_integral: int256, new_error_integral: int256, new_area: int256) -> int256:
+    return self._clamp_error_integral(bounded_pi_output, error_integral, new_error_integral, new_area)
 
 @internal
 @view
-def _clamp_error_integral(bounded_pi_output:int256, new_error_integral: int256, new_area: int256) -> int256: 
+def _clamp_error_integral(bounded_pi_output:int256, error_integral: int256, new_error_integral: int256, new_area: int256) -> int256: 
     # This logic is strictly for a *reverse-acting* controller where controller
     # output is opposite sign of error(kp and ki < 0)
     clamped_error_integral: int256 = new_error_integral
-    if (bounded_pi_output == self.output_lower_bound and new_area > 0 and self.error_integral > 0):
+    if (bounded_pi_output == self.output_lower_bound and new_area > 0 and error_integral > 0):
         clamped_error_integral = clamped_error_integral - new_area
-    elif (bounded_pi_output == self.output_upper_bound and new_area < 0 and self.error_integral < 0):
+    elif (bounded_pi_output == self.output_upper_bound and new_area < 0 and error_integral < 0):
         clamped_error_integral = clamped_error_integral - new_area
     return clamped_error_integral
 
 @internal
 @view
-def _get_new_error_integral(error: int256) -> (int256, int256):
-    return (self.error_integral + error, error)
+def _get_new_error_integral(cid: uint64, error: int256) -> (int256, int256):
+    return (self.error_integral[cid] + error, error)
 
 @external
 @view
-def get_new_error_integral(error: int256) -> (int256, int256):
-    return self._get_new_error_integral(error)
+def get_new_error_integral(cid: uint64, error: int256) -> (int256, int256):
+    return self._get_new_error_integral(cid, error)
 
 @internal
 @view
 def _get_raw_pi_output(error: int256, errorI: int256) -> (int256, int256, int256):
     # // output = P + I = Kp * error + Ki * errorI
-    p_output: int256 = (error * self.kp) // EIGHTEEN_DECIMAL_NUMBER
-    i_output: int256 = (errorI * self.ki) // EIGHTEEN_DECIMAL_NUMBER
+    control_output: ControlOutput = self.control_output
+    p_output: int256 = (error * convert(control_output.kp, int256)) // EIGHTEEN_DECIMAL_NUMBER
+    i_output: int256 = (errorI * convert(control_output.ki, int256)) // EIGHTEEN_DECIMAL_NUMBER
 
-    return (self.co_bias + p_output + i_output, p_output, i_output)
+    return (convert(control_output.co_bias, int256) + p_output + i_output, p_output, i_output)
 
 @external
 @view
@@ -233,134 +304,138 @@ def _error(target: int256, measured: int256) -> int256:
      return (target - measured) * EIGHTEEN_DECIMAL_NUMBER // target
 
 @external
-def update_oracle(dat: Bytes[4096])-> (uint256, uint256):
-    sid: uint8 = 0
-    cid: uint64 = 0
-    typ: uint16 = 0
-    new_value: uint240 = 0
-    new_ts: uint48 = 0
-    new_height: uint64 = 0
+@view
+def calc_deviation(cid: uint64, new_value: uint256, current_value: uint256) -> uint256:
+    return self._calc_deviation(cid, new_value, current_value)
 
-    # new values
-    sid, cid, typ, new_value, new_ts, new_height = store._decode(dat, self.reward_type)
-
-    new_value_u: uint256 = convert(new_value, uint256)
-
-    current_value: uint256 = 0
-    current_height: uint64 = 0
-    current_ts: uint48 = 0
-
-    # Current oracle values
-    (current_value, current_height, current_ts) = staticcall self.oracle.get(sid, cid, typ)
-
+@internal
+@view
+def _calc_deviation(cid: uint64, new_value: uint256, current_value: uint256) -> uint256:
     target_scale: uint256 = self.scales[cid]
     assert target_scale != 0, "scale for cid is zero"
 
-    # get update deviation and staleness(time_since)
-    deviation: uint256 = 0
-    if new_value_u > current_value:
-        deviation = (new_value_u - current_value)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
+    if new_value > current_value:
+        return (new_value - current_value)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
     else:
-        deviation = (current_value - new_value_u)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
-  
+        return (current_value - new_value)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
+
+def _require_new_values(new_height: uint64, current_height: uint64, new_ts: uint48, current_ts: uint48): 
     # This matches acceptance criteria in oracle
     assert new_height > current_height or (new_height==current_height and new_ts > current_ts), "new values are old"
 
-    time_since: uint256 = convert(new_ts - current_ts, uint256) * EIGHTEEN_DECIMAL_NUMBER_U
+def _calc_reward_mult(cid: uint64, time_since: uint256) -> int256:
+    count: uint256 = self.count[cid]
+    window_size: uint256 = self._get_window_size(cid)
 
-    # calculate update reward
-    time_reward: int256 = 0
-    deviation_reward: int256 = 0
-    time_reward, deviation_reward = self._calc_reward(convert(time_since, int256)//1000, convert(deviation, int256))
+    # update oracle update_interval
+    self._add_value(cid, time_since, count, window_size)
 
-    # update oracle update_interval process
-    self._add_value(cid, time_since)
+    # Dont use feedback if number of samples is lt window size
+    if count + 1 < window_size:
+        return EIGHTEEN_DECIMAL_NUMBER
+
     update_interval: int256 = convert(self._get_average(cid), int256)
-
-    # get current error from target interval
-    target_time_int: int256 = convert(self.target_time_since, int256)
-    error: int256 = self._error(target_time_int, update_interval)
+    error: int256 = self._error(convert(self.target_time_since, int256), update_interval)
 
     reward_mult: int256 = 0
     p_output: int256 = 0
     i_output: int256 = 0
 
     # update feedback mechanism and get current reward multiplier
-    reward_mult, p_output, i_output = self._update(error)
+    reward_mult, p_output, i_output = self._update(cid, error)
 
-    # Don't use feedback if number of samples is less than window size
-    if self.count[cid] < self._get_window_size(cid):
-        reward_mult = EIGHTEEN_DECIMAL_NUMBER
+    return reward_mult
+
+@external
+def update_oracle(dat: Bytes[1024])-> (uint256, uint256):
+    tip_typ: uint16 = self.tip_reward_type
+    sid: uint8 = 0
+    cid: uint64 = 0
+    typ: uint16 = 0
+    new_basefee_value: uint240 = 0
+    new_tip_value: uint240 = 0
+    new_ts: uint48 = 0
+    new_height: uint64 = 0
+
+    # decode data and get new values 
+    sid, cid, new_basefee_value, new_tip_value, new_ts, new_height = self._decode(dat, tip_typ)
+
+    new_tip_value_u: uint256 = convert(new_tip_value, uint256)
+    new_basefee_value_u: uint256 = convert(new_basefee_value, uint256)
+    new_gasprice_value: uint256 = new_basefee_value_u + new_tip_value_u
+
+    current_gasprice_value: uint256 = 0
+    current_basefee_value: uint256 = 0
+    current_tip_value: uint256 = 0
+    current_height: uint64 = 0
+    current_ts: uint48 = 0
+
+    # current oracle values
+    (current_basefee_value, current_height, current_ts) = staticcall self.oracle.get(sid, cid, BASEFEE_REWARD_TYPE)
+    (current_tip_value, current_height, current_ts) = staticcall self.oracle.get(sid, cid, tip_typ)
+    current_gasprice_value = current_basefee_value + current_tip_value
+
+    # dont accept old values
+    self._require_new_values(new_height, current_height, new_ts, current_ts)
+
+    # calculate deviation and staleness(time_since) for new values
+    deviation: uint256 = self._calc_deviation(cid, new_gasprice_value, current_gasprice_value)
+    time_since: uint256 = convert(new_ts - current_ts, uint256) * EIGHTEEN_DECIMAL_NUMBER_U
+
+    # calculate reward
+    time_reward: int256 = 0
+    deviation_reward: int256 = 0
+    time_reward, deviation_reward = self._calc_reward(convert(time_since, int256)//1000, convert(deviation, int256))
+ 
+    # calculate reward multiplier
+    reward_mult: int256 = self._calc_reward_mult(cid, time_since)
 
     # adjust rewards with multiplier
     time_reward_adj: int256 = reward_mult * time_reward // EIGHTEEN_DECIMAL_NUMBER
     deviation_reward_adj: int256 = reward_mult * deviation_reward // EIGHTEEN_DECIMAL_NUMBER
 
-    # store rewards
+    # convert and round rewards
+    #time_reward_adj_u: uint256 = 0
+    #deviation_reward_adj_u: uint256 = 0
+    #time_reward_adj_u, deviation_reward_adj_u = self._round_rewards(convert(time_reward_adj, uint256), 
+    #                                                                convert(deviation_reward_adj, uint256))
+
     time_reward_adj_u: uint256 = convert(time_reward_adj, uint256)
     deviation_reward_adj_u: uint256 = convert(deviation_reward_adj, uint256)
-    self.rewards[msg.sender] += time_reward_adj_u + deviation_reward_adj_u
 
-    log OracleUpdated(chain_id=cid, new_value=new_value_u,
+
+    # store rewards
+    self.rewards[msg.sender] += time_reward_adj_u + deviation_reward_adj_u
+    self.total_rewards += time_reward_adj_u + deviation_reward_adj_u
+
+    log OracleUpdated(updater=msg.sender, chain_id=cid, new_value=new_gasprice_value,
                       deviation=deviation, time_since=time_since,
                       time_reward=time_reward_adj_u, deviation_reward=deviation_reward_adj_u,
                       reward_mult=reward_mult)
 
+    # send new values to oracle
     extcall self.oracle.storeValues(dat)
 
     return time_reward_adj_u, deviation_reward_adj_u
 
 @external
-def update_oracle_mock(chain_id: uint64, new_value: uint256, new_height: uint64) -> (uint256, uint256):
-    current_value: uint256 = 0
-    current_height: uint64 = 0
-    last_update_time: uint48 = 0
-    current_value, current_height, last_update_time = staticcall self.oracle.get_value(chain_id)
-    target_scale: uint256 = self.scales[chain_id]
+@view
+def round_rewards(time_reward: uint256, deviation_reward: uint256) -> (uint256, uint256):
+    return self._round_rewards(time_reward, deviation_reward)
 
-    assert target_scale != 0, "Target scale is zero"
+@internal
+@view
+def _round_rewards(time_reward: uint256, deviation_reward: uint256) -> (uint256, uint256):
+    time_reward_rounded: uint256 = time_reward
+    deviation_reward_rounded: uint256 = deviation_reward
 
-    deviation: uint256 = 0
-    if new_value > current_value:
-        #deviation = min((new_value - current_value)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale, self.max_deviation)
-        deviation = (new_value - current_value)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
-    else:
-        deviation = (current_value - new_value)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
+    if time_reward != convert(self.max_time_reward, uint256):
+        time_reward_rounded = (time_reward + EIGHTEEN_DECIMAL_NUMBER_U)
+    if deviation_reward != convert(self.max_deviation_reward, uint256):
+        deviation_reward_rounded = (deviation_reward + EIGHTEEN_DECIMAL_NUMBER_U)
 
-    time_since: uint256 = (block.timestamp - convert(last_update_time, uint256)) * EIGHTEEN_DECIMAL_NUMBER_U
+    return time_reward_rounded//EIGHTEEN_DECIMAL_NUMBER_U, deviation_reward_rounded//EIGHTEEN_DECIMAL_NUMBER_U
 
-    time_reward: int256 = 0
-    deviation_reward: int256 = 0
-    time_reward, deviation_reward = self._calc_reward(convert(time_since, int256), convert(deviation, int256))
-
-    # calculate reward multiplier
-    self._add_value(chain_id, time_since)
-    update_interval: int256 = convert(self._get_average(chain_id), int256)
-    target_time_int: int256 = convert(self.target_time_since, int256)
-    error: int256 = (target_time_int - update_interval) * EIGHTEEN_DECIMAL_NUMBER // target_time_int
-
-    reward_mult: int256 = 0
-    p_output: int256 = 0
-    i_output: int256 = 0
-
-    reward_mult, p_output, i_output = self._update(error)
-
-    # Don't use feedback if number of samples is less than window size
-    if self.count[chain_id] < self._get_window_size(chain_id):
-        reward_mult = EIGHTEEN_DECIMAL_NUMBER
-
-    time_reward_adj: int256 = reward_mult * time_reward // EIGHTEEN_DECIMAL_NUMBER
-    deviation_reward_adj: int256 = reward_mult * deviation_reward // EIGHTEEN_DECIMAL_NUMBER
-
-    #assert reward_adj > 0, "RewardController: reward_adj is not positive"
-
-    time_reward_adj_u: uint256 = convert(time_reward_adj, uint256)
-    deviation_reward_adj_u: uint256 = convert(deviation_reward_adj, uint256)
-    self.rewards[msg.sender] += time_reward_adj_u + deviation_reward_adj_u
-
-    extcall self.oracle.set_value(chain_id, new_value, new_height)
-
-    return time_reward_adj_u, deviation_reward_adj_u
 
 @external
 @view
@@ -375,8 +450,9 @@ def calc_time_reward(time_since: int256) -> int256:
 @internal
 @view
 def _calc_time_reward(time_since: int256) -> int256:
-    return max(min(self.coeff[0]*time_since//EIGHTEEN_DECIMAL_NUMBER + 
-           self.coeff[2]*time_since*time_since//EIGHTEEN_DECIMAL_NUMBER//EIGHTEEN_DECIMAL_NUMBER, self.max_time_reward), self.min_time_reward)
+    coeff: Coefficients = self.coeff
+    return max(min(convert(coeff.zero, int256)*time_since//EIGHTEEN_DECIMAL_NUMBER + 
+           convert(coeff.two, int256)*time_since*time_since//THIRTY_SIX_DECIMAL_NUMBER, self.max_time_reward), self.min_time_reward)
 
 @external
 @view
@@ -386,8 +462,9 @@ def calc_deviation_reward(time_since: int256) -> int256:
 @internal
 @view
 def _calc_deviation_reward(deviation: int256) -> int256:
-    return max(min(self.coeff[1]*deviation//EIGHTEEN_DECIMAL_NUMBER +
-           self.coeff[4]*deviation*deviation//EIGHTEEN_DECIMAL_NUMBER//EIGHTEEN_DECIMAL_NUMBER, self.max_deviation_reward), self.min_deviation_reward)
+    coeff: Coefficients = self.coeff
+    return max(min(convert(coeff.one, int256)*deviation//EIGHTEEN_DECIMAL_NUMBER +
+           convert(coeff.three, int256)*deviation*deviation//THIRTY_SIX_DECIMAL_NUMBER, self.max_deviation_reward), self.min_deviation_reward)
 
 @internal
 @view
@@ -395,8 +472,10 @@ def _calc_reward(time_since: int256, deviation: int256) -> (int256, int256):
     return self._calc_time_reward(time_since), self._calc_deviation_reward(deviation)
 
 @external
-def add_value(chain_id: uint64, new_value: uint256):
-    self._add_value(chain_id, new_value)
+def test_add_value(chain_id: uint64, new_value: uint256):
+    count: uint256 = self.count[chain_id]
+    window_size: uint256 = self._get_window_size(chain_id)
+    self._add_value(chain_id, new_value, count, window_size)
 
 @external
 @view
@@ -411,16 +490,17 @@ def _get_window_size(chain_id: uint64) -> uint256:
         return self.default_window_size
     return value
 
+@external
+def add_value(chain_id: uint64, new_value: uint256, count: uint256, window_size: uint256):
+    self._add_value(chain_id, new_value, count, window_size)
+
 @internal
-def _add_value(chain_id: uint64, new_value: uint256):
-   
+def _add_value(chain_id: uint64, new_value: uint256, count: uint256, window_size: uint256):
     #Add a new value to the circular buffer and update rolling sum.
-    window_size: uint256 = self._get_window_size(chain_id)
-    
+
     old_value: uint256 = 0
 
-    #if self.count[chain_id] < self.window_size[chain_id]:
-    if self.count[chain_id] < window_size:
+    if count < window_size:
         # Buffer not full yet
         self.count[chain_id] += 1
     else:
@@ -450,10 +530,10 @@ def _get_average(chain_id: uint64) -> uint256:
 
 @external
 def resize_buffer(chain_id: uint64, new_window_size: uint256):
+    assert self.authorities[msg.sender]
     # Resize the buffer to a new window_size and adjust sum/count as needed.
     assert new_window_size > 0, "New window_size must be greater than 0"
 
-    #if new_window_size == self.window_size[chain_id]:
     if new_window_size == self._get_window_size(chain_id):
         return  # No change needed
 
@@ -485,16 +565,16 @@ def resize_buffer(chain_id: uint64, new_window_size: uint256):
     # NOTE: Old values beyond `new_window_size` will remain in storage, but ignored logically.
 
 @external
-def update(error: int256) -> (int256, int256, int256):
-    return self._update(error)
+def test_update(cid: uint64, error: int256) -> (int256, int256, int256):
+    return self._update(cid, error)
 
 @internal
-def _update(error: int256) -> (int256, int256, int256):
-    assert block.timestamp  > self.last_update_time, "RewardController/wait-longer"
-
-    new_error_integral: int256 = 0
-    new_area: int256 = 0
-    (new_error_integral, new_area) = self._get_new_error_integral(error)
+def _update(cid: uint64, error: int256) -> (int256, int256, int256):
+    #new_error_integral: int256 = 0
+    #new_area: int256 = 0
+    #(new_error_integral, new_area) = self._get_new_error_integral(cid, error)
+    error_integral: int256 = self.error_integral[cid]
+    new_error_integral: int256 = error_integral + error
 
     pi_output: int256 = 0
     p_output: int256 = 0
@@ -503,33 +583,33 @@ def _update(error: int256) -> (int256, int256, int256):
 
     bounded_pi_output: int256 = self._bound_pi_output(pi_output)
 
-    self.error_integral = self._clamp_error_integral(bounded_pi_output, new_error_integral, new_area)
+    #self.error_integral[cid] = self._clamp_error_integral(cid, bounded_pi_output, new_error_integral, new_area)
+    self.error_integral[cid] = self._clamp_error_integral(bounded_pi_output, error_integral, new_error_integral, error)
 
-    self.last_update_time = block.timestamp
-    self.last_error = error
-
-    self.last_output = bounded_pi_output
-    self.last_p_output = p_output
-    self.last_i_output = i_output
+    # could maybe remove these to save gas
+    #self.last_update_time[cid] = block.timestamp
+    #self.last_output[cid] = bounded_pi_output
+    #self.last_p_output[cid] = p_output
+    #self.last_i_output[cid] = i_output
 
     return (bounded_pi_output, p_output, i_output)
 
-@external
-@view
-def last_update() -> (uint256, int256, int256, int256):
-    return (self.last_update_time, self.last_output, self.last_p_output, self.last_i_output)
+#@external
+#@view
+#def last_update(cid: uint64) -> (uint256, int256, int256, int256):
+#    return (self.last_update_time[cid], self.last_output[cid], self.last_p_output[cid], self.last_i_output[cid])
 
 @external
 @view
-def get_new_pi_output(error: int256) -> (int256, int256, int256):
-    return self._get_new_pi_output(error)
+def get_new_pi_output(cid: uint64, error: int256) -> (int256, int256, int256):
+    return self._get_new_pi_output(cid, error)
 
 @internal
 @view
-def _get_new_pi_output(error: int256) -> (int256, int256, int256):
+def _get_new_pi_output(cid:  uint64, error: int256) -> (int256, int256, int256):
     new_error_integral: int256 = 0
     tmp: int256 = 0
-    (new_error_integral, tmp) = self._get_new_error_integral(error)
+    (new_error_integral, tmp) = self._get_new_error_integral(cid, error)
 
     pi_output: int256 = 0
     p_output: int256 = 0
@@ -540,8 +620,7 @@ def _get_new_pi_output(error: int256) -> (int256, int256, int256):
 
     return (bounded_pi_output, p_output, i_output)
 
-@external
-@view
-def elapsed() -> uint256:
-    return 0 if self.last_update_time == 0 else block.timestamp - self.last_update_time
-
+#@external
+#@view
+#def elapsed(cid: uint64) -> uint256:
+#    return block.timestamp - self.last_update_time[cid]

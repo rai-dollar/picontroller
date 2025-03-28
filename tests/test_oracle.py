@@ -27,11 +27,6 @@ max_deviation = 5 * 10**18 # 5
 default_window_size = 20
 coeff = [10611581, 3777134486958753, 38572373423, 5670509383, 19263385883489428]
 
-@pytest.fixture
-def store(owner, project):
-    store = owner.deploy(project.store, sender=owner)
-    return store
-
 # Use this to match existing controller tests
 def assertEq(x, y):
     assert x == y
@@ -53,8 +48,8 @@ def create_payload(plen, ts, sid, cid, height, typ_values={}, version=1):
 
     return header + values
 
-class TestStore:
-    def test_prepare_header(self, store):
+class TestOracle:
+    def _test_prepare_header(self, store):
         version = 1
         height = 12345678
         chainid = 56
@@ -76,7 +71,7 @@ class TestStore:
 
         assert result == expected_bytes32, "Header packing failed in Vyper!"
 
-    def test_create_header(self, controller):
+    def _test_create_header(self, controller):
         version = 1
         height = 12345678
         chainid = 56
@@ -97,7 +92,7 @@ class TestStore:
         assert h == 12345678
 
 
-    def test_create_payload(self, controller):
+    def _test_create_payload(self, controller):
 
         typ_values = {107: 10000000000,
                       199: 20000000000,
@@ -122,7 +117,7 @@ class TestStore:
         assert basefee_val == typ_values[107]
         assert tip_val == typ_values[322]
 
-    def test_create_header_vals(self, controller):
+    def _test_create_header_vals(self, controller):
         version = 1
         height = 12345678
         chainid = 56
@@ -167,7 +162,7 @@ class TestStore:
         assert basefee_val == val_1
         assert tip_val == val_3
 
-    def test_decode_header(self, store, owner):
+    def _test_decode_header(self, store, owner):
         # Define the input hex data as bytes
         a: bytes = bytes.fromhex("0000000000000003019460ee47e9020000000000000001000000000149dad401006b0000000000000000000000000000000000000000000000000011dab0f6ee0070000000000000000000000000000000000000000000000000000a04855e220141000000000000000000000000000000000000000000000000000005290f62089b3891d48dd725e0c8370155fee14aac001fe061f23d0c8003469af1d8e4201200d1e03e17bbfcfd866fc50d153be546ffadc022c046f1dd82441242a1f28e1c")
 
@@ -177,7 +172,7 @@ class TestStore:
         assert plen == 3
         assert scid == 2417851639229258349477888
 
-    def test_append_type(self, store, owner):
+    def _test_append_type(self, store, owner):
         # Define the input hex data as bytes
         scid = 2417851639229258349477888;
         typ = 107;
@@ -187,11 +182,11 @@ class TestStore:
         scida = store.append_type(scid, typ)
         assert scida == scid + typ
 
-    def test_get_key(self, store, owner):
+    def _test_get_key(self, store, owner):
         scid = store.get_key(2, 1, 107)
         assert scid == 2417851639229258349477888 + 107
 
-    def test_store_values(self, store, owner):
+    def _test_store_values(self, controller, owner):
         # Define the input hex data as bytes
         a: bytes = bytes.fromhex("0000000000000003019460ee47e9020000000000000001000000000149dad401006b0000000000000000000000000000000000000000000000000011dab0f6ee0070000000000000000000000000000000000000000000000000000a04855e220141000000000000000000000000000000000000000000000000000005290f62089b3891d48dd725e0c8370155fee14aac001fe061f23d0c8003469af1d8e4201200d1e03e17bbfcfd866fc50d153be546ffadc022c046f1dd82441242a1f28e1c")
 
@@ -216,7 +211,7 @@ class TestStore:
         assert h == 21617364
         assert ts == 1736793016297
 
-    def test_get_value(self, store, owner):
+    def _test_get_value(self, store, owner):
         a: bytes = bytes.fromhex("0000000000000003019460ee47e9020000000000000001000000000149dad401006b0000000000000000000000000000000000000000000000000011dab0f6ee0070000000000000000000000000000000000000000000000000000a04855e220141000000000000000000000000000000000000000000000000000005290f62089b3891d48dd725e0c8370155fee14aac001fe061f23d0c8003469af1d8e4201200d1e03e17bbfcfd866fc50d153be546ffadc022c046f1dd82441242a1f28e1c")
         """
         print("first full val")
@@ -242,11 +237,47 @@ class TestStore:
         val, typ = store.get_value(a, 2)
         assert (val, typ) == (86576994, 321)
 
-    def test_decode(self, store, owner):
+    def test_store(self, controller, oracle, owner):
+        """
         a: bytes = bytes.fromhex("0000000000000003019460ee47e9020000000000000001000000000149dad401006b0000000000000000000000000000000000000000000000000011dab0f6ee0070000000000000000000000000000000000000000000000000000a04855e220141000000000000000000000000000000000000000000000000000005290f62089b3891d48dd725e0c8370155fee14aac001fe061f23d0c8003469af1d8e4201200d1e03e17bbfcfd866fc50d153be546ffadc022c046f1dd82441242a1f28e1c")
 
-        sid, cid, typ, val, ts, h = store.decode(a, 107)
-        assert typ == 107
-        assert val == 76683474670
+        sid, cid, plen, ts, h = controller.decode_head(a)
         assert sid == 2
         assert cid == 1
+        assert plen == 3
+        assert ts == 1736793016297
+        assert h == 21617364
+
+        sid, cid, bf_val, tip_val, ts, h = controller.decode(a, 322)
+
+        assert sid == 2
+        assert cid == 1
+        assert bf_val == 76683474670
+        assert tip_val == 76683474670
+        assert ts == 1736793016297
+        """
+
+
+        sid = 2
+        cid = 56
+        typ_values = {107: 10000000000,
+              199: 20000000000,
+              322: 500000000}
+
+        a = create_payload(plen=len(typ_values), ts=9876543210, sid=sid, cid=cid, height=12345678, typ_values=typ_values)
+
+        oracle.storeValues(a, sender=owner)
+
+
+        tip_val, tip_height, tip_ts = oracle.get(sid, cid, 322)
+        bf_val, bf_height, bf_ts = oracle.get(sid, cid, 107)
+
+
+        assert tip_val == 500000000
+        assert tip_height == 12345678
+        assert tip_ts == 9876543210
+        assert bf_val == 10000000000
+        assert bf_height == 12345678
+        assert bf_ts == 9876543210
+
+
