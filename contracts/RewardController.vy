@@ -6,7 +6,7 @@ interface IOracle:
     def storeValues(dat: Bytes[4096]): nonpayable
 
 event OracleUpdated:
-    updater: address,
+    updater: address
     chain_id: uint64
     new_value: uint256
     deviation: uint256
@@ -53,7 +53,7 @@ oracle: public(IOracle)
 
 #error_integral: public(int256)
 error_integral: public(HashMap[uint64, int256])
-#last_output: public(HashMap[uint64, int256])
+last_output: public(HashMap[uint64, int256])
 #last_p_output: public(HashMap[uint64, int256])
 #last_i_output: public(HashMap[uint64, int256])
 #last_update_time: public(HashMap[uint64, uint256])
@@ -388,7 +388,7 @@ def update_oracle(dat: Bytes[1024])-> (uint256, uint256):
     time_reward, deviation_reward = self._calc_reward(convert(time_since, int256)//1000, convert(deviation, int256))
  
     # calculate reward multiplier
-    reward_mult: int256 = self._calc_reward_mult(cid, time_since)
+    reward_mult: int256 = self._calc_reward_mult(cid, time_since//1000)
 
     # adjust rewards with multiplier
     time_reward_adj: int256 = reward_mult * time_reward // EIGHTEEN_DECIMAL_NUMBER
@@ -588,7 +588,7 @@ def _update(cid: uint64, error: int256) -> (int256, int256, int256):
 
     # could maybe remove these to save gas
     #self.last_update_time[cid] = block.timestamp
-    #self.last_output[cid] = bounded_pi_output
+    self.last_output[cid] = bounded_pi_output
     #self.last_p_output[cid] = p_output
     #self.last_i_output[cid] = i_output
 
