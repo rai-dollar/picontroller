@@ -1,3 +1,4 @@
+import os
 import random
 import json
 import time
@@ -710,6 +711,38 @@ class TestRewardController:
 
             a = utils.create_payload(**payload_params)
             tx = controller.update_oracle(a, sender=owner);
+
+    def test_update_oracles(self, owner, controller, oracle, chain):
+
+        n = 5
+        scales = [(i+1, (i+1)*10**18) for i in range(n)]
+        controller.set_scales(scales, sender=owner)
+
+        # build multi-chain payload
+        payload = b''
+        for i in range(n):
+            typ_values = {107: random.randint(10**15, 10**18), 199: random.randint(10**15, 10**18), 322: random.randint(10**15, 10**18)}
+            ts = int(time.time() * 1000)
+            sid = 2
+            cid = i+1
+            payload_params = {
+                "plen": len(typ_values),
+                "ts": ts + i*2000,
+                "sid": sid,
+                "cid": cid,
+                "height": i,
+                "typ_values": typ_values
+                }
+
+            # payload + signature
+            payload += utils.create_payload(**payload_params) + os.urandom(65)
+
+        tx = controller.update_oracles(payload, n, sender=owner);
+
+        events = controller.OracleUpdated.query("*")
+        for i, e in events.iterrows():
+            print(e.event_name)
+            print(e.event_arguments)
 
     def _test_update_oracle_max_reward(self, owner, controller, chain):
         # fast forward to get maximum time since last oracle update

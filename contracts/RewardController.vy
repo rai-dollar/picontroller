@@ -3,7 +3,7 @@
 
 interface IOracle:
     def get(systemid: uint8, cid: uint64, typ: uint16) -> (uint256, uint64, uint48): view
-    def storeValues(dat: Bytes[4096]): nonpayable
+    def storeValues(dat: Bytes[16384]): nonpayable
 
 event OracleUpdated:
     updater: address
@@ -177,12 +177,12 @@ def modify_parameters_uint(parameter: String[32], val: uint256):
 
 @external
 @pure
-def test_decode_head(dat: Bytes[4096]) -> (uint8, uint64, uint16, uint48, uint64):
+def test_decode_head(dat: Bytes[16384]) -> (uint8, uint64, uint16, uint48, uint64):
     return self._decode_head(dat)
 
 @internal
 @pure
-def _decode_head(dat: Bytes[4096]) -> (uint8, uint64, uint16, uint48, uint64):
+def _decode_head(dat: Bytes[16384]) -> (uint8, uint64, uint16, uint48, uint64):
     h: uint64 = convert(slice(dat, 23, 8), uint64)  # Extract last 8 bytes of 32-byte block, excluding version
     cid: uint64 = convert(slice(dat, 15, 8), uint64)
     sid: uint8 = convert(slice(dat, 14, 1), uint8)
@@ -191,14 +191,20 @@ def _decode_head(dat: Bytes[4096]) -> (uint8, uint64, uint16, uint48, uint64):
 
     return sid, cid, plen, ts, h
 
+@internal
+@pure
+def _decode_plen(dat: Bytes[16384]) -> uint16:
+    plen: uint16 = convert(slice(dat, 6, 2), uint16)
+    return plen
+
 @external
 @pure
-def decode(dat: Bytes[4096], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
+def decode(dat: Bytes[16384], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
     return self._decode(dat, tip_typ)
 
 @internal
 @pure
-def _decode(dat: Bytes[4096], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
+def _decode(dat: Bytes[16384], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
     sid: uint8 = 0 
     cid: uint64 = 0 
     plen: uint16 = 0 
@@ -347,7 +353,44 @@ def _calc_reward_mult(cid: uint64, time_since: uint256) -> int256:
     return reward_mult
 
 @external
-def update_oracle(dat: Bytes[1024])-> (uint256, uint256):
+def update_oracles(dat_many: Bytes[16384], n: uint256)-> (uint256[16], uint256[16]):
+    offset: uint256 = 0
+    plen: uint16 = 0
+
+    time_reward: uint256 = 0
+    deviation_reward: uint256 = 0
+
+    time_rewards: uint256[16] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+    deviation_rewards: uint256[16] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+
+    dat_p: Bytes[16384] = b""
+    l: uint256 = len(dat_many)
+
+
+    for i: uint256 in range(n, bound=16):
+    #for i: uint256 in range(n-1, bound=16):
+        #dat_p = slice(dat_many, offset, len(dat_many) - offset)
+        dat_p = slice(dat_many, offset, l-offset)
+        plen = self._decode_plen(dat_p)
+        if plen == 0:
+            assert i == n - 1, "plen is zero before n is reached"
+            break
+
+        time_reward, deviation_reward = self._update_oracle(dat_p)
+        time_rewards[i] = time_reward
+        deviation_rewards[i] = deviation_reward
+
+        offset += 32 + convert(plen, uint256)*32 + 65
+
+    return time_rewards, deviation_rewards
+
+
+@external
+def update_oracle(dat: Bytes[16384])-> (uint256, uint256):
+    return self._update_oracle(dat)
+    
+@internal
+def _update_oracle(dat: Bytes[16384])-> (uint256, uint256):
     tip_typ: uint16 = self.tip_reward_type
     sid: uint8 = 0
     cid: uint64 = 0

@@ -53,8 +53,8 @@ def controller(owner, oracle, project, chain):
 def set_scales(account, controller, params):
     scales = list(zip(params.scales.keys(), params.scales.values()))
     controller.set_scales(scales, sender=account)
-    for s in params.scales.keys():
-        print(s, controller.scales(s))
+    #for s in params.scales.keys():
+    #    print(s, controller.scales(s))
 
 @pytest.fixture
 def controller_sepolia(owner, project):
