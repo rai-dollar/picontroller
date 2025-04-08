@@ -366,10 +366,7 @@ def update_oracles(dat_many: Bytes[16384], n: uint256)-> (uint256[16], uint256[1
     dat_p: Bytes[16384] = b""
     l: uint256 = len(dat_many)
 
-
     for i: uint256 in range(n, bound=16):
-    #for i: uint256 in range(n-1, bound=16):
-        #dat_p = slice(dat_many, offset, len(dat_many) - offset)
         dat_p = slice(dat_many, offset, l-offset)
         plen = self._decode_plen(dat_p)
         if plen == 0:
@@ -419,7 +416,9 @@ def _update_oracle(dat: Bytes[16384])-> (uint256, uint256):
     current_gasprice_value = current_basefee_value + current_tip_value
 
     # dont accept old values
-    self._require_new_values(new_height, current_height, new_ts, current_ts)
+    #self._require_new_values(new_height, current_height, new_ts, current_ts)
+    if not (new_height > current_height or (new_height == current_height and new_ts > current_ts)): 
+        return 0, 0
 
     # calculate deviation and staleness(time_since) for new values
     deviation: uint256 = self._calc_deviation(cid, new_gasprice_value, current_gasprice_value)
@@ -445,7 +444,6 @@ def _update_oracle(dat: Bytes[16384])-> (uint256, uint256):
 
     time_reward_adj_u: uint256 = convert(time_reward_adj, uint256)
     deviation_reward_adj_u: uint256 = convert(deviation_reward_adj, uint256)
-
 
     # store rewards
     self.rewards[msg.sender] += time_reward_adj_u + deviation_reward_adj_u

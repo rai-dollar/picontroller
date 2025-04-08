@@ -35,4 +35,5 @@ def storeValues(dat: Bytes[4096]):
     self.values[cid][107] = basefee_val
     self.values[cid][322] = tip_val
     self.heights[cid] = h
+    self.heights[cid] = h
     self.update_times[cid] = ts

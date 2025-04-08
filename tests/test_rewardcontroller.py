@@ -712,9 +712,80 @@ class TestRewardController:
             a = utils.create_payload(**payload_params)
             tx = controller.update_oracle(a, sender=owner);
 
-    def test_update_oracles(self, owner, controller, oracle, chain):
+    def test_update_oracles_one(self, owner, controller, oracle, chain):
 
-        n = 5
+        n = 1
+        scales = [(i+1, (i+1)*10**18) for i in range(n)]
+        controller.set_scales(scales, sender=owner)
+
+        print("Values before")
+        for i in range(n):
+            bf_value, bf_height, bf_ts = oracle.get(2, i+1, 107)
+            tip_value, tip_height, tip_ts = oracle.get(2, i+1, 322)
+            print(f"{i=}, {bf_value=}, {bf_height=}, {bf_ts=}")
+            print(f"{i=}, {tip_value=}, {tip_height=}, {tip_ts=}")
+
+        # build multi-chain payload
+        payload = b''
+        for i in range(n):
+            typ_values = {107: random.randint(10**15, 10**18), 199: random.randint(10**15, 10**18), 322: random.randint(10**15, 10**18)}
+            ts = int(time.time() * 1000)
+            sid = 2
+            cid = i+1
+            payload_params = {
+                "plen": len(typ_values),
+                "ts": ts + i*2000,
+                "sid": sid,
+                "cid": cid,
+                "height": (i+1)*100,
+                "typ_values": typ_values
+                }
+
+            # payload + signature
+            payload += utils.create_payload(**payload_params) + os.urandom(65)
+
+        time_rewards, dev_rewards = controller.update_oracles.call(payload, n)
+
+        # ensure first n time and dev rewards are non-zero
+        for i, val in enumerate(time_rewards):
+            if i == n:
+                break
+            assert val != 0
+            assert dev_rewards[i] != 0
+            
+        # ensure first n time and dev rewards are non-zero
+
+        tx = controller.update_oracles(payload, n, sender=owner)
+        assert len(tx.events) == 1
+
+        print("Values after first update")
+        for i in range(n):
+            bf_value, bf_height, bf_ts = oracle.get(2, i+1, 107)
+            tip_value, tip_height, tip_ts = oracle.get(2, i+1, 322)
+            print(f"{i=}, {bf_value=}, {bf_height=}, {bf_ts=}")
+            print(f"{i=}, {tip_value=}, {tip_height=}, {tip_ts=}")
+
+
+        events = controller.OracleUpdated.query("*")
+        assert len(events) == n
+        print("first update")
+        for e in tx.events:
+            print(e.event_name)
+            print(e.event_arguments)
+            print(f"{e.block_number=}")
+
+        tx = controller.update_oracles(payload, n, sender=owner)
+        # no update
+        assert len(tx.events) == 0
+
+        print("Values after first update")
+        for i in range(n):
+            bf_value, bf_height, bf_ts = oracle.get(2, i+1, 107)
+            tip_value, tip_height, tip_ts = oracle.get(2, i+1, 322)
+
+    def test_update_oracles_partial_udpate(self, owner, controller, oracle, chain):
+        # not all estimates update
+        n = 3
         scales = [(i+1, (i+1)*10**18) for i in range(n)]
         controller.set_scales(scales, sender=owner)
 
@@ -730,19 +801,109 @@ class TestRewardController:
                 "ts": ts + i*2000,
                 "sid": sid,
                 "cid": cid,
-                "height": i,
+                "height": (i+1)*100,
                 "typ_values": typ_values
                 }
 
             # payload + signature
             payload += utils.create_payload(**payload_params) + os.urandom(65)
 
+        # build multi-chain payload #2 with only 1 new estimate
+        payload2 = b''
+        for i in range(n):
+            typ_values = {107: random.randint(10**15, 10**18), 199: random.randint(10**15, 10**18), 322: random.randint(10**15, 10**18)}
+            ts = int(time.time() * 1000)
+            sid = 2
+            cid = i+1
+            payload_params = {
+                "plen": len(typ_values),
+                "ts": ts + i*2000,
+                "sid": sid,
+                "cid": cid,
+                "height": (i+1)*100,
+                "typ_values": typ_values
+                }
+            if i == 1: # make one different so it succeeds
+                payload_params['height'] +=1
+                payload_params['ts'] += 2000
+
+            # payload + signature
+            payload2 += utils.create_payload(**payload_params) + os.urandom(65)
+
+        # first update, call
+        time_rewards, dev_rewards = controller.update_oracles.call(payload, n)
+
+        # ensure first n time and dev rewards are non-zero
+        for i, val in enumerate(time_rewards):
+            if i == n:
+                break
+            assert val != 0
+            assert dev_rewards[i] != 0
+            
+        tx = controller.update_oracles(payload, n, sender=owner)
+        # all n update
+        assert len(tx.events) == n
+
+        # second update, call
+        time_rewards, dev_rewards = controller.update_oracles.call(payload2, n)
+
+        # ensure only i=1 time and dev rewards are non-zero
+        for i, val in enumerate(time_rewards):
+            if i == 1:
+                assert val != 0
+                assert dev_rewards[i] != 0
+            else:
+                assert val == 0
+                assert dev_rewards[i] == 0
+
+        # second update
+        tx = controller.update_oracles(payload2, n, sender=owner)
+        # only 1 update
+        assert len(tx.events) == 1
+
+    def test_update_oracles_w_dupes(self, owner, controller, oracle, chain):
+        n = 5
+        scales = [(i+1, (i+1)*10**18) for i in range(n)]
+        controller.set_scales(scales, sender=owner)
+
+        # constant cid, time and height for all payloads
+        cid = 1
+        ts = 2000
+        height = 100
+
+        # build multi-chain payload
+        payload = b''
+        for i in range(n):
+            typ_values = {107: random.randint(10**15, 10**18), 199: random.randint(10**15, 10**18), 322: random.randint(10**15, 10**18)}
+            ts = int(time.time() * 1000)
+            sid = 2
+            cid = 1
+            payload_params = {
+                "plen": len(typ_values),
+                "ts": ts,
+                "sid": sid,
+                "cid": cid,
+                "height": height,
+                "typ_values": typ_values
+                }
+
+            # payload + signature
+            payload += utils.create_payload(**payload_params) + os.urandom(65)
+
+        time_rewards, dev_rewards = controller.update_oracles.call(payload, n)
+        assert len(time_rewards) == len(dev_rewards) == 16
+        for i, val in enumerate(time_rewards):
+            if i != 0:
+                assert val == dev_rewards[i] == 0
+
         tx = controller.update_oracles(payload, n, sender=owner);
 
-        events = controller.OracleUpdated.query("*")
-        for i, e in events.iterrows():
-            print(e.event_name)
-            print(e.event_arguments)
+        # only the first paylaod should receive an update
+        assert len(tx.events) == 1
+
+        # same payload should produce zero updates
+        tx = controller.update_oracles(payload, n, sender=owner);
+        assert len(tx.events) == 0
 
     def _test_update_oracle_max_reward(self, owner, controller, chain):
         # fast forward to get maximum time since last oracle update
