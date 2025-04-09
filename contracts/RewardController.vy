@@ -30,7 +30,12 @@ struct ControlOutput:
     ki: int80
     co_bias: int80
 
+struct Reward:
+    time_reward: uint256
+    deviation_reward: uint256
+
 BASEFEE_REWARD_TYPE: public(constant(uint16)) = 107
+MAX_PAYLOADS: public(constant(uint16)) = 64
 
 authorities: public(HashMap[address, bool])
 
@@ -353,15 +358,16 @@ def _calc_reward_mult(cid: uint64, time_since: uint256) -> int256:
     return reward_mult
 
 @external
-def update_oracles(dat_many: Bytes[16384], n: uint256)-> (uint256[16], uint256[16]):
+def update_oracles(dat_many: Bytes[16384], n: uint256)-> Reward[MAX_PAYLOADS]:
     offset: uint256 = 0
     plen: uint16 = 0
 
     time_reward: uint256 = 0
     deviation_reward: uint256 = 0
 
-    time_rewards: uint256[16] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-    deviation_rewards: uint256[16] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+    #time_rewards: uint256[MAX_PAYLOADS] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+    #deviation_rewards: uint256[MAX_PAYLOADS] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+    rewards: Reward[MAX_PAYLOADS] = empty(Reward[MAX_PAYLOADS])
 
     dat_p: Bytes[16384] = b""
     l: uint256 = len(dat_many)
@@ -374,12 +380,14 @@ def update_oracles(dat_many: Bytes[16384], n: uint256)-> (uint256[16], uint256[1
             break
 
         time_reward, deviation_reward = self._update_oracle(dat_p)
-        time_rewards[i] = time_reward
-        deviation_rewards[i] = deviation_reward
+        #time_rewards[i] = time_reward
+        #deviation_rewards[i] = deviation_reward
+        rewards[i] = Reward(time_reward=time_reward, deviation_reward=deviation_reward)
 
         offset += 32 + convert(plen, uint256)*32 + 65
 
-    return time_rewards, deviation_rewards
+    #return time_rewards, deviation_rewards
+    return rewards
 
 
 @external

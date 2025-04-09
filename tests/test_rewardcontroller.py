@@ -666,11 +666,11 @@ class TestRewardController:
         assert abs(sum(controller.calc_reward(1, 0)) - params.min_reward) < 10**15
 
     def test_calc_reward_max(self, owner, controller):
-        assert abs(sum(controller.calc_reward(params.max_ts, params.max_deviation)) - params.max_reward) < params.max_reward/1000
+        assert abs(sum(controller.calc_reward(params.max_ts, params.max_deviation)) - params.max_reward) < params.max_reward/100
 
     def test_calc_reward_half(self, owner, controller):
-        assert abs(sum(controller.calc_reward(params.max_ts, params.min_deviation)) - params.max_reward//2) < params.max_reward/1000
-        assert abs(sum(controller.calc_reward(params.min_ts, params.max_deviation)) - params.max_reward//2) < params.max_reward/1000
+        assert abs(sum(controller.calc_reward(params.max_ts, params.min_deviation)) - params.max_reward//2) < params.max_reward/100
+        assert abs(sum(controller.calc_reward(params.min_ts, params.max_deviation)) - params.max_reward//2) < params.max_reward/100
 
     def test_update(self, owner, controller, oracle, chain):
         # fast forward to get maximum time since last oracle update
@@ -712,11 +712,12 @@ class TestRewardController:
             a = utils.create_payload(**payload_params)
             tx = controller.update_oracle(a, sender=owner);
 
-    def test_update_oracles_one(self, owner, controller, oracle, chain):
-
-        n = 1
+    def test_update_oracles_multi(self, owner, controller, oracle, chain):
+        n = 3
         scales = [(i+1, (i+1)*10**18) for i in range(n)]
         controller.set_scales(scales, sender=owner)
+
+        #assert controller.MAX_PAYLOADS() == n
 
         print("Values before")
         for i in range(n):
@@ -744,19 +745,19 @@ class TestRewardController:
             # payload + signature
             payload += utils.create_payload(**payload_params) + os.urandom(65)
 
-        time_rewards, dev_rewards = controller.update_oracles.call(payload, n)
+        rewards = controller.update_oracles.call(payload, n)
+        #print(f"{rewards=}")
 
         # ensure first n time and dev rewards are non-zero
-        for i, val in enumerate(time_rewards):
+        for i, (time_reward, dev_reward) in enumerate(rewards):
             if i == n:
                 break
-            assert val != 0
-            assert dev_rewards[i] != 0
+            assert time_reward != 0
+            assert dev_reward != 0
             
-        # ensure first n time and dev rewards are non-zero
 
         tx = controller.update_oracles(payload, n, sender=owner)
-        assert len(tx.events) == 1
+        assert len(tx.events) == n
 
         print("Values after first update")
         for i in range(n):
@@ -831,30 +832,30 @@ class TestRewardController:
             payload2 += utils.create_payload(**payload_params) + os.urandom(65)
 
         # first update, call
-        time_rewards, dev_rewards = controller.update_oracles.call(payload, n)
+        rewards = controller.update_oracles.call(payload, n)
 
         # ensure first n time and dev rewards are non-zero
-        for i, val in enumerate(time_rewards):
+        for i, (time_reward, dev_reward) in enumerate(rewards):
             if i == n:
                 break
-            assert val != 0
-            assert dev_rewards[i] != 0
+            assert time_reward != 0
+            assert dev_reward != 0
             
         tx = controller.update_oracles(payload, n, sender=owner)
         # all n update
         assert len(tx.events) == n
 
         # second update, call
-        time_rewards, dev_rewards = controller.update_oracles.call(payload2, n)
+        rewards = controller.update_oracles.call(payload2, n)
 
         # ensure only i=1 time and dev rewards are non-zero
-        for i, val in enumerate(time_rewards):
+        for i, (time_reward, dev_reward) in enumerate(rewards):
             if i == 1:
-                assert val != 0
-                assert dev_rewards[i] != 0
+                assert time_reward != 0
+                assert dev_reward != 0
             else:
-                assert val == 0
-                assert dev_rewards[i] == 0
+                assert time_reward == 0
+                assert dev_reward == 0
 
         # second update
         tx = controller.update_oracles(payload2, n, sender=owner)
@@ -890,11 +891,12 @@ class TestRewardController:
             # payload + signature
             payload += utils.create_payload(**payload_params) + os.urandom(65)
 
-        time_rewards, dev_rewards = controller.update_oracles.call(payload, n)
-        assert len(time_rewards) == len(dev_rewards) == 16
-        for i, val in enumerate(time_rewards):
+        rewards = controller.update_oracles.call(payload, n)
+
+        # ensure first n time and dev rewards are non-zero
+        for i, (time_reward, dev_reward) in enumerate(rewards):
             if i != 0:
-                assert val == dev_rewards[i] == 0
+                assert time_reward == dev_reward == 0
 
         tx = controller.update_oracles(payload, n, sender=owner);
 

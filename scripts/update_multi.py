@@ -35,38 +35,24 @@ print(f"{rewards_before=}")
 print(f"{total_rewards=}")
 
 sid = 2
-cid = 10
+cid_1 = 42161
+cid_2 = 10
 tip_typ = params.tip_reward_type
 
 # read gasnet
-dat: bytes = oracle_gasnet.functions.getValues(sid, cid).call()
-sid, cid, new_basefee_value, new_tip_value, new_ts, new_height = controller.decode(dat, tip_typ)
-new_gasprice_value = new_basefee_value + new_tip_value
+dat_1: bytes = oracle_gasnet.functions.getValues(sid, cid_1).call()
+dat_2: bytes = oracle_gasnet.functions.getValues(sid, cid_2).call()
+dat = dat_1 + dat_2
 
-# get current oracle values
-current_basefee_value, current_height, current_ts = oracle_sepolia.get(sid, cid, 107)
-current_tip_value, current_height, current_ts = oracle_sepolia.get(sid, cid, tip_typ)
-current_value = current_basefee_value + current_tip_value
-print(f"{current_value=}, {current_height=}, {current_ts=}")
-
-rewards = controller.update_oracles.call(dat, 1)
-print("eth_call rewards")
+rewards = controller.update_oracles.call(dat, 2)
+print("pending rewards")
 print(rewards)
 
 # update oracle w/ gasnet payload
-tx = controller.update_oracle(dat, sender=account, raise_on_revert=True, gas=3000000)
+tx = controller.update_oracles(dat, 2, sender=account, raise_on_revert=True, gas=3000000)
 tx.show_trace(True)
 
 print(tx.events)
-
-# get current oracle values
-updated_basefee_value, updated_height, updated_ts = oracle_sepolia.get(sid, cid, 107)
-updated_tip_value, updated_height, updated_ts = oracle_sepolia.get(sid, cid, tip_typ)
-updated_value = updated_basefee_value + updated_tip_value
-assert updated_height != current_height
-assert updated_ts != current_ts
-
-print(f"{updated_value=}, {updated_height=}, {updated_ts=}")
 
 rewards_after = controller.rewards(account)
 print(f"{rewards_after=}")
