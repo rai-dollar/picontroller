@@ -679,7 +679,7 @@ class TestRewardController:
         update_interval = 100 * 10**18
         target_time = 1800 * 10**18
         error = (update_interval - params.target_time_since) * 10**18 // update_interval
-        res = controller.test_update(1,error, sender=owner)
+        res = controller.test_update(1, error, sender=owner)
         assert not res.failed
         # TODO events
         #output = controller.last_output(1)
@@ -687,13 +687,6 @@ class TestRewardController:
         #assert output != 10**18
 
     def test_update_oracle(self, owner, controller, oracle, chain):
-        #a: bytes = bytes.fromhex("0000000000000003019460ee47e9020000000000000001000000000149dad401006b0000000000000000000000000000000000000000000000000011dab0f6ee0070000000000000000000000000000000000000000000000000000a04855e220141000000000000000000000000000000000000000000000000000005290f62089b3891d48dd725e0c8370155fee14aac001fe061f23d0c8003469af1d8e4201200d1e03e17bbfcfd866fc50d153be546ffadc022c046f1dd82441242a1f28e1c")
-        #tx = controller.update_oracle(a, sender=owner);
-
-        current_value: uint256 = 0
-        current_height: uint64 = 0
-        current_ts: uint48 = 0
-        #current_value, current_height, current_ts = oracle.get(1)
 
         for i in range(100):
             typ_values = {107: random.randint(1, 10**18), 199: random.randint(1, 10**18), 322: random.randint(1, 10**18)}
@@ -711,6 +704,76 @@ class TestRewardController:
 
             a = utils.create_payload(**payload_params)
             tx = controller.update_oracle(a, sender=owner);
+
+    def test_get_updaters_chunk(self, controller, oracle, chain):
+
+        n_updaters = 10
+        #n_updaters = len(accounts.test_accounts)
+        for i in range(n_updaters):
+            # setting balance doesn't work with test provider?
+            updater = accounts.test_accounts.generate_test_account()
+            updater.balance += 10**18
+
+            #updater = accounts.test_accounts[i]
+            print(f"{updater.address=}")
+            typ_values = {107: random.randint(1, 10**18), 199: random.randint(1, 10**18), 322: random.randint(1, 10**18)}
+            ts = int(time.time() * 1000)
+            sid = 2
+            cid = 1
+            payload_params = {
+                "plen": len(typ_values),
+                "ts": ts + i*2000,
+                "sid": sid,
+                "cid": cid,
+                "height": i,
+                "typ_values": typ_values
+                }
+
+            a = utils.create_payload(**payload_params)
+
+            with accounts.use_sender(updater):
+                tx = controller.update_oracle(a)
+
+            assert controller.n_updaters() == i + 1
+            print(f"{tx.gas_used=}")
+
+        updaters, rewards = controller.get_updaters_chunk(0, 256)
+
+        assert len(updaters) == len(rewards) == 256
+        assert controller.n_updaters() == n_updaters
+        print("updaters")
+        print(updaters)
+        print("rewards")
+        print(rewards)
+
+
+    def test_freeze(self, owner, controller, oracle, chain):
+
+        typ_values = {107: random.randint(1, 10**18), 199: random.randint(1, 10**18), 322: random.randint(1, 10**18)}
+        ts = int(time.time() * 1000)
+        sid = 2
+        cid = 1
+        payload_params = {
+            "plen": len(typ_values),
+            "ts": ts + 2000,
+            "sid": sid, 
+            "cid": cid, 
+            "height": 1,
+            "typ_values": typ_values
+            }    
+
+        a = utils.create_payload(**payload_params)
+
+        with pytest.raises(Exception):
+            controller.freeze()
+
+        controller.freeze(sender=owner)
+
+        with pytest.raises(Exception):
+            controller.update_oracle(a, sender=owner);
+
+        controller.unfreeze(sender=owner)
+        controller.update_oracle(a, sender=owner);
 
     def test_update_oracles_multi(self, owner, controller, oracle, chain):
         n = 3
@@ -1209,19 +1272,6 @@ class TestRewardController:
         controller.update_oracle(e, sender=owner)
         rewards_after_e = controller.rewards(owner)
         print(f"{rewards_after_e=}")
-
-    def test_round_rewards(self, owner, controller):
-        time_r, dev_r = controller.round_rewards(5*10**17, 5*10**17)
-        assert time_r == 1
-        assert dev_r == 1
-
-        time_r, dev_r = controller.round_rewards(10*10**18, 20*10**18)
-        assert time_r == 11
-        assert dev_r == 21
-
-        time_r, dev_r = controller.round_rewards(controller.max_time_reward(), controller.max_deviation_reward())
-        assert time_r == controller.max_time_reward()//10**18
-        assert dev_r == controller.max_deviation_reward()//10**18
 
     def test_calc_deviation(self, owner, controller):
         controller.set_scale(1, 3*10**15, sender=owner)

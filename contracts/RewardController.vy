@@ -34,8 +34,13 @@ struct Reward:
     time_reward: uint256
     deviation_reward: uint256
 
+struct TotalRewards:
+    updater: address
+    total_rewards: uint256
+
 BASEFEE_REWARD_TYPE: public(constant(uint16)) = 107
 MAX_PAYLOADS: public(constant(uint16)) = 64
+MAX_UPDATERS: public(constant(uint32)) = 2**16
 
 authorities: public(HashMap[address, bool])
 
@@ -54,6 +59,10 @@ min_deviation_reward: public(int256)
 max_deviation_reward: public(int256)
 default_window_size: public(uint256)
 window_size: HashMap[uint64, uint256]
+has_updated: public(HashMap[address, bool])
+updaters: public(address[MAX_UPDATERS])
+n_updaters:  public(uint32)
+frozen: public(bool)
 oracle: public(IOracle)
 
 #error_integral: public(int256)
@@ -106,7 +115,6 @@ def __init__(_kp: int80, _ki: int80, _co_bias: int80,
     self.max_deviation_reward = convert(_max_reward//2, int256)
     self.default_window_size = _default_window_size
     self.oracle = IOracle(oracle)
-    #self.coeff = _coeff
     self.coeff = Coefficients(zero=_coeff[0], one=_coeff[1], two=_coeff[2], three=_coeff[3])
 
 @external
@@ -129,6 +137,16 @@ def set_scales(scales: DynArray[Scale, 64]):
 def set_scale(chain_id: uint64, scale: uint256):
     assert self.authorities[msg.sender]
     self.scales[chain_id] = scale
+
+@external
+def freeze():
+    assert self.authorities[msg.sender]
+    self.frozen = True
+
+@external
+def unfreeze():
+    assert self.authorities[msg.sender]
+    self.frozen = False
 
 @external
 def modify_parameters_addr(parameter: String[32], addr: address):
@@ -330,10 +348,7 @@ def _calc_deviation(cid: uint64, new_value: uint256, current_value: uint256) -> 
     else:
         return (current_value - new_value)*EIGHTEEN_DECIMAL_NUMBER_U//target_scale
 
-def _require_new_values(new_height: uint64, current_height: uint64, new_ts: uint48, current_ts: uint48): 
-    # This matches acceptance criteria in oracle
-    assert new_height > current_height or (new_height==current_height and new_ts > current_ts), "new values are old"
-
+@internal
 def _calc_reward_mult(cid: uint64, time_since: uint256) -> int256:
     count: uint256 = self.count[cid]
     window_size: uint256 = self._get_window_size(cid)
@@ -357,16 +372,53 @@ def _calc_reward_mult(cid: uint64, time_since: uint256) -> int256:
 
     return reward_mult
 
+@internal
+def _add_updater(updater: address):
+    n:  uint32 = self.n_updaters
+    if not self.has_updated[updater]:
+        self.updaters[n] = updater
+        self.n_updaters = n + 1
+        self.has_updated[updater] = True
+
+@external
+@view
+def get_updaters() -> (address[MAX_UPDATERS], uint256[MAX_UPDATERS]):
+    updaters: address[MAX_UPDATERS] = empty(address[MAX_UPDATERS])
+    rewards: uint256[MAX_UPDATERS] = empty(uint256[MAX_UPDATERS])
+
+    for i: uint32 in range(0, self.n_updaters, bound=MAX_UPDATERS):
+        updater: address = self.updaters[i]
+        #tr: TotalReward = TotalReward(updater=updater, total_reward=self.rewards(updater))
+        updaters[i] = updater
+        rewards[i] = self.rewards[updater]
+
+    return updaters, rewards
+
+@external
+@view
+def get_updaters_chunk(start: uint256, count: uint256) -> (address[256], uint256[256]):
+    assert count <= 256
+    result_updaters: address[256] = empty(address[256])
+    result_rewards: uint256[256] = empty(uint256[256])
+
+    for i: uint256 in range(count, bound=256):
+        idx: uint256 = start + i
+        updater: address = self.updaters[idx]
+        result_updaters[i] = updater
+        result_rewards[i] = self.rewards[updater]
+
+    return result_updaters, result_rewards
+
 @external
 def update_oracles(dat_many: Bytes[16384], n: uint256)-> Reward[MAX_PAYLOADS]:
+    assert not self.frozen, "rewards contract is frozen"
+    self._add_updater(msg.sender) 
     offset: uint256 = 0
     plen: uint16 = 0
 
     time_reward: uint256 = 0
     deviation_reward: uint256 = 0
 
-    #time_rewards: uint256[MAX_PAYLOADS] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-    #deviation_rewards: uint256[MAX_PAYLOADS] = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
     rewards: Reward[MAX_PAYLOADS] = empty(Reward[MAX_PAYLOADS])
 
     dat_p: Bytes[16384] = b""
@@ -380,18 +432,16 @@ def update_oracles(dat_many: Bytes[16384], n: uint256)-> Reward[MAX_PAYLOADS]:
             break
 
         time_reward, deviation_reward = self._update_oracle(dat_p)
-        #time_rewards[i] = time_reward
-        #deviation_rewards[i] = deviation_reward
         rewards[i] = Reward(time_reward=time_reward, deviation_reward=deviation_reward)
 
         offset += 32 + convert(plen, uint256)*32 + 65
 
-    #return time_rewards, deviation_rewards
     return rewards
-
 
 @external
 def update_oracle(dat: Bytes[16384])-> (uint256, uint256):
+    assert not self.frozen, "rewards contract is frozen"
+    self._add_updater(msg.sender) 
     return self._update_oracle(dat)
     
 @internal
@@ -423,8 +473,6 @@ def _update_oracle(dat: Bytes[16384])-> (uint256, uint256):
     (current_tip_value, current_height, current_ts) = staticcall self.oracle.get(sid, cid, tip_typ)
     current_gasprice_value = current_basefee_value + current_tip_value
 
-    # dont accept old values
-    #self._require_new_values(new_height, current_height, new_ts, current_ts)
     if not (new_height > current_height or (new_height == current_height and new_ts > current_ts)): 
         return 0, 0
 
@@ -444,12 +492,6 @@ def _update_oracle(dat: Bytes[16384])-> (uint256, uint256):
     time_reward_adj: int256 = reward_mult * time_reward // EIGHTEEN_DECIMAL_NUMBER
     deviation_reward_adj: int256 = reward_mult * deviation_reward // EIGHTEEN_DECIMAL_NUMBER
 
-    # convert and round rewards
-    #time_reward_adj_u: uint256 = 0
-    #deviation_reward_adj_u: uint256 = 0
-    #time_reward_adj_u, deviation_reward_adj_u = self._round_rewards(convert(time_reward_adj, uint256), 
-    #                                                                convert(deviation_reward_adj, uint256))
-
     time_reward_adj_u: uint256 = convert(time_reward_adj, uint256)
     deviation_reward_adj_u: uint256 = convert(deviation_reward_adj, uint256)
 
@@ -466,25 +508,6 @@ def _update_oracle(dat: Bytes[16384])-> (uint256, uint256):
     extcall self.oracle.storeValues(dat)
 
     return time_reward_adj_u, deviation_reward_adj_u
-
-@external
-@view
-def round_rewards(time_reward: uint256, deviation_reward: uint256) -> (uint256, uint256):
-    return self._round_rewards(time_reward, deviation_reward)
-
-@internal
-@view
-def _round_rewards(time_reward: uint256, deviation_reward: uint256) -> (uint256, uint256):
-    time_reward_rounded: uint256 = time_reward
-    deviation_reward_rounded: uint256 = deviation_reward
-
-    if time_reward != convert(self.max_time_reward, uint256):
-        time_reward_rounded = (time_reward + EIGHTEEN_DECIMAL_NUMBER_U)
-    if deviation_reward != convert(self.max_deviation_reward, uint256):
-        deviation_reward_rounded = (deviation_reward + EIGHTEEN_DECIMAL_NUMBER_U)
-
-    return time_reward_rounded//EIGHTEEN_DECIMAL_NUMBER_U, deviation_reward_rounded//EIGHTEEN_DECIMAL_NUMBER_U
-
 
 @external
 @view
@@ -539,9 +562,9 @@ def _get_window_size(chain_id: uint64) -> uint256:
         return self.default_window_size
     return value
 
-@external
-def add_value(chain_id: uint64, new_value: uint256, count: uint256, window_size: uint256):
-    self._add_value(chain_id, new_value, count, window_size)
+#@external
+#def add_value(chain_id: uint64, new_value: uint256, count: uint256, window_size: uint256):
+#    self._add_value(chain_id, new_value, count, window_size)
 
 @internal
 def _add_value(chain_id: uint64, new_value: uint256, count: uint256, window_size: uint256):
@@ -619,9 +642,7 @@ def test_update(cid: uint64, error: int256) -> (int256, int256, int256):
 
 @internal
 def _update(cid: uint64, error: int256) -> (int256, int256, int256):
-    #new_error_integral: int256 = 0
-    #new_area: int256 = 0
-    #(new_error_integral, new_area) = self._get_new_error_integral(cid, error)
+    # update feedback mechanism
     error_integral: int256 = self.error_integral[cid]
     new_error_integral: int256 = error_integral + error
 
