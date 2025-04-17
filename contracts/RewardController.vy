@@ -3,6 +3,7 @@
 
 interface IOracle:
     def get(systemid: uint8, cid: uint64, typ: uint16) -> (uint256, uint64, uint48): view
+    #def storeValues(dat: DynArray[uint8, 256]): nonpayable
     def storeValues(dat: Bytes[16384]): nonpayable
 
 event OracleUpdated:
@@ -41,6 +42,7 @@ struct TotalRewards:
 BASEFEE_REWARD_TYPE: public(constant(uint16)) = 107
 MAX_PAYLOADS: public(constant(uint16)) = 64
 MAX_UPDATERS: public(constant(uint32)) = 2**16
+MAX_PAYLOAD_SIZE: public(constant(uint256)) = 16384
 
 authorities: public(HashMap[address, bool])
 
@@ -200,12 +202,12 @@ def modify_parameters_uint(parameter: String[32], val: uint256):
 
 @external
 @pure
-def test_decode_head(dat: Bytes[16384]) -> (uint8, uint64, uint16, uint48, uint64):
+def test_decode_head(dat: Bytes[MAX_PAYLOAD_SIZE]) -> (uint8, uint64, uint16, uint48, uint64):
     return self._decode_head(dat)
 
 @internal
 @pure
-def _decode_head(dat: Bytes[16384]) -> (uint8, uint64, uint16, uint48, uint64):
+def _decode_head(dat: Bytes[MAX_PAYLOAD_SIZE]) -> (uint8, uint64, uint16, uint48, uint64):
     h: uint64 = convert(slice(dat, 23, 8), uint64)  # Extract last 8 bytes of 32-byte block, excluding version
     cid: uint64 = convert(slice(dat, 15, 8), uint64)
     sid: uint8 = convert(slice(dat, 14, 1), uint8)
@@ -216,18 +218,18 @@ def _decode_head(dat: Bytes[16384]) -> (uint8, uint64, uint16, uint48, uint64):
 
 @internal
 @pure
-def _decode_plen(dat: Bytes[16384]) -> uint16:
+def _decode_plen(dat: Bytes[MAX_PAYLOAD_SIZE]) -> uint16:
     plen: uint16 = convert(slice(dat, 6, 2), uint16)
     return plen
 
 @external
 @pure
-def decode(dat: Bytes[16384], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
+def decode(dat: Bytes[MAX_PAYLOAD_SIZE], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
     return self._decode(dat, tip_typ)
 
 @internal
 @pure
-def _decode(dat: Bytes[16384], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
+def _decode(dat: Bytes[MAX_PAYLOAD_SIZE], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
     sid: uint8 = 0 
     cid: uint64 = 0 
     plen: uint16 = 0 
@@ -410,7 +412,11 @@ def get_updaters_chunk(start: uint256, count: uint256) -> (address[256], uint256
     return result_updaters, result_rewards
 
 @external
-def update_oracles(dat_many: Bytes[16384], n: uint256)-> Reward[MAX_PAYLOADS]:
+def update_oracles(dat_many: Bytes[MAX_PAYLOAD_SIZE], n: uint256)-> Reward[MAX_PAYLOADS]:
+    return self._update_oracles(dat_many, n)
+
+@internal
+def _update_oracles(dat_many: Bytes[MAX_PAYLOAD_SIZE], n: uint256)-> Reward[MAX_PAYLOADS]:
     assert not self.frozen, "rewards contract is frozen"
     self._add_updater(msg.sender) 
     offset: uint256 = 0
@@ -421,7 +427,7 @@ def update_oracles(dat_many: Bytes[16384], n: uint256)-> Reward[MAX_PAYLOADS]:
 
     rewards: Reward[MAX_PAYLOADS] = empty(Reward[MAX_PAYLOADS])
 
-    dat_p: Bytes[16384] = b""
+    dat_p: Bytes[MAX_PAYLOAD_SIZE] = b""
     l: uint256 = len(dat_many)
 
     for i: uint256 in range(n, bound=16):
@@ -431,21 +437,40 @@ def update_oracles(dat_many: Bytes[16384], n: uint256)-> Reward[MAX_PAYLOADS]:
             assert i == n - 1, "plen is zero before n is reached"
             break
 
-        time_reward, deviation_reward = self._update_oracle(dat_p)
+        payload_size: uint256 = 32 + convert(plen, uint256)*32 + 65
+        time_reward, deviation_reward = self._update_oracle(dat_p, payload_size)
+        #time_reward, deviation_reward = self._update_oracle(slice(dat_p, offset, offset + payload_size), payload_size)
         rewards[i] = Reward(time_reward=time_reward, deviation_reward=deviation_reward)
 
+        # add full payload size
         offset += 32 + convert(plen, uint256)*32 + 65
 
     return rewards
 
 @external
-def update_oracle(dat: Bytes[16384])-> (uint256, uint256):
+def update_oracle(dat: Bytes[MAX_PAYLOAD_SIZE])-> Reward:
     assert not self.frozen, "rewards contract is frozen"
     self._add_updater(msg.sender) 
-    return self._update_oracle(dat)
-    
+    return self._update_oracles(dat, 1)[0]
+
 @internal
-def _update_oracle(dat: Bytes[16384])-> (uint256, uint256):
+def copy_bytes_to_dynarray(src: Bytes[MAX_PAYLOAD_SIZE], start: uint256, length: uint256) -> DynArray[uint8, MAX_PAYLOAD_SIZE]:
+    assert start + length <= len(src), "out of bounds"
+
+    result: DynArray[uint8, MAX_PAYLOAD_SIZE] = []
+    for i: uint256 in range(length, bound=MAX_PAYLOAD_SIZE):
+        b: uint8 = convert(slice(src, start + i, 1), uint8)
+        result.append(b)
+
+    return result
+
+@internal
+def _update_oracle_stub(dat: Bytes[MAX_PAYLOAD_SIZE], l: uint256)-> (uint256, uint256):
+    tip_typ: uint16 = self.tip_reward_type
+    return 0, 0
+
+@internal
+def _update_oracle(dat: Bytes[MAX_PAYLOAD_SIZE], l: uint256)-> (uint256, uint256):
     tip_typ: uint16 = self.tip_reward_type
     sid: uint8 = 0
     cid: uint64 = 0
@@ -505,7 +530,9 @@ def _update_oracle(dat: Bytes[16384])-> (uint256, uint256):
                       reward_mult=reward_mult)
 
     # send new values to oracle
-    extcall self.oracle.storeValues(dat)
+    #extcall self.oracle.storeValues(dat)
+    extcall self.oracle.storeValues(slice(dat, 0, l))
+    #extcall self.oracle.storeValues(self.copy_bytes_to_dynarray(dat, 0, l))
 
     return time_reward_adj_u, deviation_reward_adj_u
 

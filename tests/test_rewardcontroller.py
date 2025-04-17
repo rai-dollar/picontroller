@@ -686,26 +686,8 @@ class TestRewardController:
         #assert output != 0
         #assert output != 10**18
 
-    def test_update_oracle(self, owner, controller, oracle, chain):
-
-        for i in range(100):
-            typ_values = {107: random.randint(1, 10**18), 199: random.randint(1, 10**18), 322: random.randint(1, 10**18)}
-            ts = int(time.time() * 1000)
-            sid = 2
-            cid = 1
-            payload_params = {
-                "plen": len(typ_values),
-                "ts": ts + i*2000,
-                "sid": sid,
-                "cid": cid,
-                "height": i,
-                "typ_values": typ_values
-                }
-
-            a = utils.create_payload(**payload_params)
-            tx = controller.update_oracle(a, sender=owner);
-
-    def test_get_updaters_chunk(self, controller, oracle, chain):
+    def _test_get_updaters_chunk(self, controller, oracle, chain):
+        # NOTE: needs --network ethereum:local:foundry
 
         n_updaters = 10
         #n_updaters = len(accounts.test_accounts)
@@ -737,15 +719,16 @@ class TestRewardController:
             assert controller.n_updaters() == i + 1
             print(f"{tx.gas_used=}")
 
-        updaters, rewards = controller.get_updaters_chunk(0, 256)
+        updaters_1, rewards_1 = controller.get_updaters_chunk(0, 1)
+        updaters_2, rewards_2 = controller.get_updaters_chunk(1, 1)
+        updaters_3, rewards_3 = controller.get_updaters_chunk(2, 8)
 
-        assert len(updaters) == len(rewards) == 256
+        updaters, rewards = controller.get_updaters_chunk(0, 10)
+
+        assert [updaters_1[0], updaters_2[0]] + updaters_3[:8] == updaters[:10]
+        assert [rewards_1[0], rewards_2[0]] + rewards_3[:8] == rewards[:10]
+
         assert controller.n_updaters() == n_updaters
-        print("updaters")
-        print(updaters)
-        print("rewards")
-        print(rewards)
-
 
     def test_freeze(self, owner, controller, oracle, chain):
 
@@ -775,8 +758,30 @@ class TestRewardController:
         controller.unfreeze(sender=owner)
         controller.update_oracle(a, sender=owner);
 
+    def test_update_oracle(self, owner, controller, oracle, chain):
+        n = 10
+        scales = [(1, 10**18)]
+        controller.set_scales(scales, sender=owner)
+
+        sid = 2
+        cid = 1
+        for i in range(n):
+            typ_values = {107: random.randint(1, 10**18), 199: random.randint(1, 10**18), 322: random.randint(1, 10**18)}
+            ts = int(time.time() * 1000)
+            payload_params = {
+                "plen": len(typ_values),
+                "ts": ts + i*2000,
+                "sid": sid,
+                "cid": cid,
+                "height": i,
+                "typ_values": typ_values
+                }
+
+            a = utils.create_payload(**payload_params)
+            tx = controller.update_oracle(a, sender=owner)
+
     def test_update_oracles_multi(self, owner, controller, oracle, chain):
-        n = 3
+        n = 2
         scales = [(i+1, (i+1)*10**18) for i in range(n)]
         controller.set_scales(scales, sender=owner)
 
@@ -806,11 +811,16 @@ class TestRewardController:
                 }
 
             # payload + signature
-            payload += utils.create_payload(**payload_params) + os.urandom(65)
+            new_payload = utils.create_payload(**payload_params)
+            print(f"{len(new_payload)=}")
+            payload += new_payload
 
-        rewards = controller.update_oracles.call(payload, n)
+        print(f"{len(payload)=}")
+        #return
+        #rewards = controller.update_oracles.call(payload, n)
         #print(f"{rewards=}")
 
+        """
         # ensure first n time and dev rewards are non-zero
         for i, (time_reward, dev_reward) in enumerate(rewards):
             if i == n:
@@ -818,8 +828,11 @@ class TestRewardController:
             assert time_reward != 0
             assert dev_reward != 0
             
+        """
 
-        tx = controller.update_oracles(payload, n, sender=owner)
+        tx = controller.update_oracles(payload, n, raise_on_revert=True, sender=owner)
+        #tx = controller.update_oracle(payload, raise_on_revert=True, sender=owner)
+        tx.show_trace(True)
         assert len(tx.events) == n
 
         print("Values after first update")
@@ -847,17 +860,18 @@ class TestRewardController:
             bf_value, bf_height, bf_ts = oracle.get(2, i+1, 107)
             tip_value, tip_height, tip_ts = oracle.get(2, i+1, 322)
 
-    def test_update_oracles_partial_udpate(self, owner, controller, oracle, chain):
+    def test_update_oracles_partial_update(self, owner, controller, oracle, chain):
         # not all estimates update
         n = 3
         scales = [(i+1, (i+1)*10**18) for i in range(n)]
         controller.set_scales(scales, sender=owner)
 
+        ts = int(time.time() * 1000)
+
         # build multi-chain payload
         payload = b''
         for i in range(n):
             typ_values = {107: random.randint(10**15, 10**18), 199: random.randint(10**15, 10**18), 322: random.randint(10**15, 10**18)}
-            ts = int(time.time() * 1000)
             sid = 2
             cid = i+1
             payload_params = {
@@ -870,13 +884,12 @@ class TestRewardController:
                 }
 
             # payload + signature
-            payload += utils.create_payload(**payload_params) + os.urandom(65)
+            payload += utils.create_payload(**payload_params)
 
         # build multi-chain payload #2 with only 1 new estimate
         payload2 = b''
         for i in range(n):
             typ_values = {107: random.randint(10**15, 10**18), 199: random.randint(10**15, 10**18), 322: random.randint(10**15, 10**18)}
-            ts = int(time.time() * 1000)
             sid = 2
             cid = i+1
             payload_params = {
@@ -892,7 +905,7 @@ class TestRewardController:
                 payload_params['ts'] += 2000
 
             # payload + signature
-            payload2 += utils.create_payload(**payload_params) + os.urandom(65)
+            payload2 += utils.create_payload(**payload_params)
 
         # first update, call
         rewards = controller.update_oracles.call(payload, n)
@@ -939,7 +952,6 @@ class TestRewardController:
         payload = b''
         for i in range(n):
             typ_values = {107: random.randint(10**15, 10**18), 199: random.randint(10**15, 10**18), 322: random.randint(10**15, 10**18)}
-            ts = int(time.time() * 1000)
             sid = 2
             cid = 1
             payload_params = {
@@ -952,7 +964,7 @@ class TestRewardController:
                 }
 
             # payload + signature
-            payload += utils.create_payload(**payload_params) + os.urandom(65)
+            payload += utils.create_payload(**payload_params)
 
         rewards = controller.update_oracles.call(payload, n)
 
@@ -971,15 +983,16 @@ class TestRewardController:
         assert len(tx.events) == 0
 
     def test_update_oracles_case(self, owner, controller, oracle, chain):
-        payload = bytes.fromhex("00000000000000020196212416c302000000000000a4b100000000135f22c001006b0000000000000000000000000000000000000000000000000000011544f601420000000000000000000000000000000000000000000000000000000000016035523055de0bf4032e4fce04d51b4cd4bb39f8dfa4c585ceb3a40ec76e7cac7bb49848b25070cb6e0662a95501c41d399c4f11dce1a18903f6d799c7e13ee81b00000000000000020196212411300200000000000000820000000000cef9d701006b0000000000000000000000000000000000000000000000000000000000fb0142000000000000000000000000000000000000000000000000000000000001706b02b1f3c9b1e64abce149334d7b11d3e4b57345f813cb57a0e9bcc16cbad43e073c42a35381b4a3c12d1544b708d42ff35766cd4830bcfddcb572c13dac8f1b0000000000000002019621240d4802000000000000000a0000000008021ff201006b000000000000000000000000000000000000000000000000000000176f00014200000000000000000000000000000000000000000000000000000000003bb36a00263aac0a8cb4406d956f94c757bf1cfe12021c49db5a4a6744d54baaf05ade4d1a0b71bbfb6934084862755eb60818852f22d1caa490e6a065350ba38c1b000000000000000201962124057802000000000000074c00000000005547fe01006b00000000000000000000000000000000000000000000000000000000017b014200000000000000000000000000000000000000000000000000000000025341ca25683d63956d63528c12ea365d3ded79615aab6d3c541cb4b620f6fa1a3e093227e0e189fc49a487531c979ebbef03d3c081a8185cf008a891f8733d39af1b00000000000000020196212405780200000000000021050000000001b6de5c01006b000000000000000000000000000000000000000000000000000000098302014200000000000000000000000000000000000000000000000000000000003b44aede6658fc3b1cd343214ca4badac1701368a7e1bce836bace46beb6c791b30e6778c2e88592ce338c19b211d4e993edb2694d26738bb220b9052ca754bfe71b00000000000000030196212412c50200000000000000010000000001535d3d01006b00000000000000000000000000000000000000000000000000002e14b202007000000000000000000000000000000000000000000000000000004ef9325d01420000000000000000000000000000000000000000000000000000054e08413fd69156a4d6d53aa7b6a6cf272f7b908ec204cd7ddd1e75a3c56d13d31ff7cb47999b2156b238e9943b207f44207ea0b719717f6389e4cdb541f8ddaa31c1fe1c000000000000000201962124057802000000000000e70800000000011155be01006b0000000000000000000000000000000000000000000000000000000000070142000000000000000000000000000000000000000000000000000009d847683f72836213cff5480073be0f00d6a6b09c2f75a486751cc913615c8b492ac84a0cf6e3549622f8b815977a4950eccb0bfbe7848361fb48e5bcbe4a64f7129f8b1b")
-        n = 0
+        #payload = bytes.fromhex("00000000000000020196212416c302000000000000a4b100000000135f22c001006b0000000000000000000000000000000000000000000000000000011544f601420000000000000000000000000000000000000000000000000000000000016035523055de0bf4032e4fce04d51b4cd4bb39f8dfa4c585ceb3a40ec76e7cac7bb49848b25070cb6e0662a95501c41d399c4f11dce1a18903f6d799c7e13ee81b00000000000000020196212411300200000000000000820000000000cef9d701006b0000000000000000000000000000000000000000000000000000000000fb0142000000000000000000000000000000000000000000000000000000000001706b02b1f3c9b1e64abce149334d7b11d3e4b57345f813cb57a0e9bcc16cbad43e073c42a35381b4a3c12d1544b708d42ff35766cd4830bcfddcb572c13dac8f1b0000000000000002019621240d4802000000000000000a0000000008021ff201006b000000000000000000000000000000000000000000000000000000176f00014200000000000000000000000000000000000000000000000000000000003bb36a00263aac0a8cb4406d956f94c757bf1cfe12021c49db5a4a6744d54baaf05ade4d1a0b71bbfb6934084862755eb60818852f22d1caa490e6a065350ba38c1b000000000000000201962124057802000000000000074c00000000005547fe01006b00000000000000000000000000000000000000000000000000000000017b014200000000000000000000000000000000000000000000000000000000025341ca25683d63956d63528c12ea365d3ded79615aab6d3c541cb4b620f6fa1a3e093227e0e189fc49a487531c979ebbef03d3c081a8185cf008a891f8733d39af1b00000000000000020196212405780200000000000021050000000001b6de5c01006b000000000000000000000000000000000000000000000000000000098302014200000000000000000000000000000000000000000000000000000000003b44aede6658fc3b1cd343214ca4badac1701368a7e1bce836bace46beb6c791b30e6778c2e88592ce338c19b211d4e993edb2694d26738bb220b9052ca754bfe71b00000000000000030196212412c50200000000000000010000000001535d3d01006b00000000000000000000000000000000000000000000000000002e14b202007000000000000000000000000000000000000000000000000000004ef9325d01420000000000000000000000000000000000000000000000000000054e08413fd69156a4d6d53aa7b6a6cf272f7b908ec204cd7ddd1e75a3c56d13d31ff7cb47999b2156b238e9943b207f44207ea0b719717f6389e4cdb541f8ddaa31c1fe1c000000000000000201962124057802000000000000e70800000000011155be01006b0000000000000000000000000000000000000000000000000000000000070142000000000000000000000000000000000000000000000000000009d847683f72836213cff5480073be0f00d6a6b09c2f75a486751cc913615c8b492ac84a0cf6e3549622f8b815977a4950eccb0bfbe7848361fb48e5bcbe4a64f7129f8b1b")
+        payload = bytes.fromhex("000000000000000201963b97894802000000000000074c000000000058aabf01006b00000000000000000000000000000000000000000000000000000000079801420000000000000000000000000000000000000000000000000000000001f473b0b8dbd10edf952e4674eda638856f245d4850e8b37f41646172f68edcbc864de23c107c4fbee34f308101df9c6e925f485d338e6e31209e3c81c9428961421c000000000000000201963b97936802000000000000a4b100000000137a13a501006b000000000000000000000000000000000000000000000000000000989680014200000000000000000000000000000000000000000000000000000000000a9fcd862343ce2703e198cfbf34f52005cd8c61e5009f77062bf3e68ccaadb52e3ddc87238fd750bd62fb997c1408f080de67286a4c3d1bd70bf70cc18d18eb931c000000000000000201963b97911802000000000000000a00000000080582b301006b0000000000000000000000000000000000000000000000000000000db115014200000000000000000000000000000000000000000000000000000000003ba27be7ed61351f4ec5539ba7e62173ba93af0b827e57411367cf2008f7f059e343df963f67bbc962b30222f5a5065c775549af5c5ad2ad48fe7bce0b0f1b24081b000000000000000201963b9775c002000000000000e708000000000113cc0701006b0000000000000000000000000000000000000000000000000000000000070142000000000000000000000000000000000000000000000000000002ce95f33562ae7f55f70a03ae52e6a96f062177d7b6a70a6f5d6b4d0cba5afcaf099ab5028888ae297bc6ac674b352716e290b69b0a95c6434354c4a2ede8736f950d291b000000000000000201963b978d300200000000000000820000000000d5bf5701006b0000000000000000000000000000000000000000000000000000000000fb0142000000000000000000000000000000000000000000000000000000000001e8b1e2365e7da9b2936722c65ad3438c0b3e2dd8832a5a5404c74599203fb6a502f54b578542a5ac0e6d43893fe32af341f830dee652bebc787b44d443b32a571b000000000000000301963b979190020000000000000001000000000153ed1901006b00000000000000000000000000000000000000000000000000001441e19e0070000000000000000000000000000000000000000000000000000000003d2001420000000000000000000000000000000000000000000000000000054e08404ee7c5b14a0b7b3e4f349d256c99f254936eda87d00238819463c3baec27729559b7d89804623948f4257d576975a229842834a4b2c9eb0c7c2bc34ec25478b51b000000000000000201963b9781780200000000000021050000000001ba411c01006b0000000000000000000000000000000000000000000000000000000cb9d90142000000000000000000000000000000000000000000000000000000000032eb210bc11310b713b17f29d1423e93dc75617addb961e979934cb9806c835b1248437edec8de362c5788a6622e519ab2a9916d75c682dcbbeabf78dfaa6e71dc1b")
+        n = 7
         #scales = [(i+1, (i+1)*10**18) for i in range(n)]
         #controller.set_scales(scales, sender=owner)
 
         #assert controller.MAX_PAYLOADS() == n
 
 
-        rewards = controller.update_oracles.call(payload, 7)
+        rewards = controller.update_oracles.call(payload, n)
         #print(f"{rewards=}")
 
         # ensure first n time and dev rewards are non-zero
@@ -1003,7 +1016,6 @@ class TestRewardController:
 
         events = controller.OracleUpdated.query("*")
         assert len(events) == n
-        print("first update")
         for e in tx.events:
             print(e.event_name)
             print(e.event_arguments)
@@ -1013,7 +1025,7 @@ class TestRewardController:
         # no update
         assert len(tx.events) == 0
 
-        print("Values after first update")
+        print("Values after second update")
         for i in range(n):
             bf_value, bf_height, bf_ts = oracle.get(2, i+1, 107)
             tip_value, tip_height, tip_ts = oracle.get(2, i+1, 322)

@@ -2,7 +2,7 @@ import pytest
 from ape import accounts, Contract
 import params
 
-from oracles import oracle_addresses
+from addresses import oracle_addresses
 from abis import gas_oracle_v2_abi
 
 SEPOLIA_ORACLE = oracle_addresses[11155111]

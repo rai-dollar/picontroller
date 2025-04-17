@@ -13,7 +13,7 @@ from scripts.abis import gas_oracle_v2_abi
 from scripts import params
 from scripts.oracles import oracle_addresses
 
-REWARDS = '0xc98a372a4b1035dcc64cbd79cc63e4873c85f55a'
+REWARDS = '0x812cb53503f7232574cb6900ccbd58dd551f3300'
 controller = project.RewardController.at(REWARDS)
 
 def set_scales(account, controller, params):

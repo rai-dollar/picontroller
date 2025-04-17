@@ -22,7 +22,8 @@ def get(sid: uint8, cid: uint64, typ: uint16) -> (uint240, uint64, uint48):
 #    self.update_times[chain_id] = convert(block.timestamp, uint48)
 
 @external
-def storeValues(dat: Bytes[4096]):
+def storeValues(dat: Bytes[16384]):
+#def storeValues(dat: DynArray[uint8, 256]):
     sid: uint8 = 0
     cid: uint64 = 0
     basefee_val: uint240 = 0

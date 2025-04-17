@@ -14,8 +14,7 @@ from scripts import params
 from scripts.oracles import oracle_addresses
 
 SEPOLIA_ORACLE = oracle_addresses[11155111]#'0xCc936bE977BeDb5140C5584d8B6043C9068622A6'
-#REWARDS = '0xf99F837971FAa3C48802231347d3e771ECf5002c'
-REWARDS = '0xc98a372a4b1035dcc64cbd79cc63e4873c85f55a'
+REWARDS = '0x812cb53503f7232574cb6900ccbd58dd551f3300'
 controller = project.RewardController.at(REWARDS)
 
 oracle_sepolia = Contract(SEPOLIA_ORACLE, abi=gas_oracle_v2_abi)

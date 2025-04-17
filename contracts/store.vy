@@ -20,6 +20,7 @@ struct Record:
 
 pStore: public(HashMap[uint88, Record])
 BASEFEE_REWARD_TYPE: public(constant(uint16)) = 107
+MAX_PAYLOAD_SIZE: public(constant(uint256)) = 16384
 
 #@internal
 #@pure
@@ -53,12 +54,12 @@ def get(systemid: uint8, cid: uint64, typ: uint16) -> (uint256, uint64, uint48):
 
 @external
 @pure
-def decode_header(dat: Bytes[4096]) -> (uint16, uint88, uint48, uint64):
+def decode_header(dat: Bytes[MAX_PAYLOAD_SIZE]) -> (uint16, uint88, uint48, uint64):
     return self._decode_header(dat)
 
 @internal
 @pure
-def _decode_header(dat: Bytes[4096]) -> (uint16, uint88, uint48, uint64):
+def _decode_header(dat: Bytes[MAX_PAYLOAD_SIZE]) -> (uint16, uint88, uint48, uint64):
     h: uint64 = convert(slice(dat, 23, 8), uint64)  # Extract last 8 bytes of 32-byte block, excluding version
     cid: uint64 = convert(slice(dat, 15, 8), uint64)  # Extract 8 bytes before h
     sid: uint8 = convert(slice(dat, 14, 1), uint8)  # Extract 1 byte before cid
@@ -76,7 +77,7 @@ def _decode_header(dat: Bytes[4096]) -> (uint16, uint88, uint48, uint64):
 
 @internal
 @pure
-def check_signature(plen: uint16, offset: uint256, signer: address, dat: Bytes[4096]):
+def check_signature(plen: uint16, offset: uint256, signer: address, dat: Bytes[MAX_PAYLOAD_SIZE]):
     siglen: uint256 = 32 + 32 * convert(plen, uint256)
     kec: bytes32 = keccak256(slice(dat, offset, siglen))
 
@@ -137,12 +138,12 @@ def encode_parameter(typ: uint16, val: uint256) -> bytes32:
 
 @external
 @pure
-def decode_head(dat: Bytes[4096]) -> (uint8, uint64, uint16, uint48, uint64):
+def decode_head(dat: Bytes[MAX_PAYLOAD_SIZE]) -> (uint8, uint64, uint16, uint48, uint64):
     return self._decode_head(dat)
 
 @internal
 @pure
-def _decode_head(dat: Bytes[4096]) -> (uint8, uint64, uint16, uint48, uint64):
+def _decode_head(dat: Bytes[MAX_PAYLOAD_SIZE]) -> (uint8, uint64, uint16, uint48, uint64):
     h: uint64 = convert(slice(dat, 23, 8), uint64)  # Extract last 8 bytes of 32-byte block, excluding version
     cid: uint64 = convert(slice(dat, 15, 8), uint64)
     sid: uint8 = convert(slice(dat, 14, 1), uint8)
@@ -153,12 +154,12 @@ def _decode_head(dat: Bytes[4096]) -> (uint8, uint64, uint16, uint48, uint64):
 
 @external
 @pure
-def decode(dat: Bytes[4096], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
+def decode(dat: Bytes[MAX_PAYLOAD_SIZE], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
     return self._decode(dat, tip_typ)
     
 @internal
 @pure
-def _decode(dat: Bytes[4096], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
+def _decode(dat: Bytes[MAX_PAYLOAD_SIZE], tip_typ: uint16) -> (uint8, uint64, uint240, uint240, uint48, uint64):
     #assert requested_typ != 0, "requested_typ can't be zero"
     sid: uint8 = 0 
     cid: uint64 = 0 
@@ -191,7 +192,7 @@ def _decode(dat: Bytes[4096], tip_typ: uint16) -> (uint8, uint64, uint240, uint2
     return sid, cid, basefee_val, tip_val, ts, h
 
 @external
-def store_values(dat: Bytes[4096]):
+def store_values(dat: Bytes[MAX_PAYLOAD_SIZE]):
     plen: uint16 = 0
     scid: uint88 = 0
     ts: uint48 = 0
@@ -203,7 +204,7 @@ def store_values(dat: Bytes[4096]):
     start: uint256 = 32
     plen_int: uint256 = convert(plen, uint256)
 
-    for j: uint256 in range(plen_int, bound=4096):
+    for j: uint256 in range(plen_int, bound=256):
 
         val_b: Bytes[32] = slice(dat, start + j*32, 32)  
         typ: uint16 = convert(slice(val_b, 0, 2), uint16)
@@ -217,7 +218,7 @@ def store_values(dat: Bytes[4096]):
 
 @external
 @view
-def get_value(dat: Bytes[4096], j: uint256) -> (uint240, uint16):
+def get_value(dat: Bytes[MAX_PAYLOAD_SIZE], j: uint256) -> (uint240, uint16):
     plen: uint16 = 0
     scid: uint88 = 0
     ts: uint48 = 0
