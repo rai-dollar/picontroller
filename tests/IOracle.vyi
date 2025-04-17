@@ -1,0 +1,22 @@
+# pragma version ~=0.4.0
+
+# IOracle
+
+@external
+@view
+def get_value(chain_id: uint64) -> (uint256, uint64, uint48):
+    ...
+
+@external
+def set_value(chain_id: uint64, new_value: uint256, height: uint64):
+    ...
+
+# V2
+@external
+@view
+def get(systemid: uint8, cid: uint64, typ: uint16) -> (uint256, uint64, uint48):
+    ...
+
+@external
+def storeValues(dat: Bytes[4096]):
+    ...

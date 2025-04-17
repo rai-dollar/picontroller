@@ -1,0 +1,57 @@
+    {
+      "type": "function",
+      "name": "getValues",
+      "inputs": [
+        {
+          "name": "systemid",
+          "type": "uint8",
+          "internalType": "uint8"
+        },
+        {
+          "name": "chainid",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "value",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "setValues",
+      "inputs": [
+        {
+          "name": "sid",
+          "type": "uint8",
+          "internalType": "uint8"
+        },
+        {
+          "name": "cid",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "timestamp",
+          "type": "uint48",
+          "internalType": "uint48"
+        },
+        {
+          "name": "height",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "payload",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    }
