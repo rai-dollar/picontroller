@@ -384,20 +384,6 @@ def _add_updater(updater: address):
 
 @external
 @view
-def get_updaters() -> (address[MAX_UPDATERS], uint256[MAX_UPDATERS]):
-    updaters: address[MAX_UPDATERS] = empty(address[MAX_UPDATERS])
-    rewards: uint256[MAX_UPDATERS] = empty(uint256[MAX_UPDATERS])
-
-    for i: uint32 in range(0, self.n_updaters, bound=MAX_UPDATERS):
-        updater: address = self.updaters[i]
-        #tr: TotalReward = TotalReward(updater=updater, total_reward=self.rewards(updater))
-        updaters[i] = updater
-        rewards[i] = self.rewards[updater]
-
-    return updaters, rewards
-
-@external
-@view
 def get_updaters_chunk(start: uint256, count: uint256) -> (address[256], uint256[256]):
     assert count <= 256
     result_updaters: address[256] = empty(address[256])
